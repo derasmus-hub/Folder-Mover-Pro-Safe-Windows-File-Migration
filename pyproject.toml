@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "folder-mover"
+name = "folder-mover-pro"
 version = "1.0.0"
-description = "Move folders based on CaseIDs from an Excel file"
+description = "Folder Mover Pro - Offline Windows File Migration Utility"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.8"
@@ -44,10 +44,12 @@ performance = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "pyinstaller>=6.0.0",
 ]
 
 [project.scripts]
 folder-mover = "folder_mover.cli:main"
+folder-mover-pro = "folder_mover.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/folder-mover"

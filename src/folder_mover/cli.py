@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set
 
-from . import __version__
+from . import __version__, PRODUCT_NAME, PRODUCT_DESCRIPTION
 from .excel import load_case_ids
 from .indexer import (
     FolderIndexer,
@@ -90,8 +90,10 @@ def load_moved_paths_from_report(report_path: Path) -> Set[str]:
 def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="folder_mover",
-        description="""
+        prog="folder-mover",
+        description=f"""
+{PRODUCT_NAME} - {PRODUCT_DESCRIPTION}
+
 Move folders based on CaseIDs from an Excel file.
 
 Scans SourceRoot for folders whose names contain CaseIDs listed in
@@ -256,7 +258,7 @@ Notes:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}"
+        version=__version__
     )
 
     return parser
@@ -369,7 +371,9 @@ def confirm_operation(total_matches: int, dest_root: Path) -> bool:
 def print_banner(args: argparse.Namespace) -> None:
     """Print startup banner with configuration."""
     print(f"\n{'='*60}")
-    print(f"Folder Mover v{__version__}")
+    print(f"{PRODUCT_NAME}")
+    print(f"Version {__version__}")
+    print(f"{PRODUCT_DESCRIPTION}")
     print(f"{'='*60}")
     print(f"Excel file:   {args.excel_file}")
     print(f"Source root:  {args.source_root}")
@@ -484,7 +488,7 @@ def main(argv: list = None) -> int:
 
     setup_logging(args.verbose)
 
-    logger.info(f"Folder Mover v{__version__}")
+    logger.info(f"{PRODUCT_NAME} v{__version__}")
     logger.debug(f"Arguments: {args}")
 
     # Validate paths before proceeding

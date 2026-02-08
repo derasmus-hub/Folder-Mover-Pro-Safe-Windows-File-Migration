@@ -16,7 +16,7 @@ env/
 *.swo
 
 # Distribution / packaging
-build/
+build/pyinstaller/
 dist/
 *.egg-info/
 *.egg

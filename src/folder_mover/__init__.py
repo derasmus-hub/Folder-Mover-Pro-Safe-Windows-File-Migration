@@ -1,5 +1,7 @@
 """
-Folder Mover - A Windows-focused CLI tool for moving folders based on Excel CaseID lists.
+Folder Mover Pro - Offline Windows File Migration Utility
+
+A Windows-focused CLI tool for moving folders based on Excel CaseID lists.
 
 This package provides functionality to:
 - Read CaseIDs from an Excel XLSX file (Column A)
@@ -10,5 +12,10 @@ This package provides functionality to:
 - Generate detailed CSV reports of operations
 """
 
-__version__ = "0.1.0"
+# Product identity constants
+PRODUCT_NAME = "Folder Mover Pro"
+PRODUCT_VERSION = "1.0.0"
+PRODUCT_DESCRIPTION = "Offline Windows File Migration Utility"
+
+__version__ = PRODUCT_VERSION
 __author__ = "Folder Mover Team"
