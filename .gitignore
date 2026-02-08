@@ -18,12 +18,15 @@ env/
 *.swp
 *.swo
 
-# Distribution / packaging (PyInstaller + Python builds)
-build/
+# Distribution / packaging
 dist/
+dist/*.exe
 *.spec
 *.egg-info/
 *.egg
+
+# PyInstaller build artifacts (keep build/ for scripts)
+build/pyinstaller/
 
 # Test and coverage
 .pytest_cache/

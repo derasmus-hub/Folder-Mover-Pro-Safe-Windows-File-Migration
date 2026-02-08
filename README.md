@@ -1,8 +1,31 @@
-# Folder Mover
+# Folder Mover Pro
 
-A Windows-focused Python CLI tool for moving folders based on CaseIDs from an Excel file.
+**Offline Windows File Migration Utility**
 
-## Quick Start
+A Windows-focused CLI tool for moving folders based on CaseIDs from an Excel file.
+
+---
+
+## Download
+
+**[Download FolderMoverPro.exe from GitHub Releases](../../releases/latest)**
+
+> Download the `.exe` file directly — **not** the source code zip.
+> No installation or Python required. Just download and run.
+
+### Quick Start (EXE)
+
+```cmd
+:: Preview what would happen (dry run)
+FolderMoverPro.exe caselist.xlsx C:\Source C:\Dest --dry-run
+
+:: Run the migration
+FolderMoverPro.exe caselist.xlsx C:\Source C:\Dest --report migration.csv
+```
+
+---
+
+## Quick Start (Python)
 
 ```powershell
 # 1. Install
@@ -203,6 +226,8 @@ When using `--report`, a detailed CSV file is generated with the following colum
 | `ERROR` | Operation failed (see message for details) |
 
 ### Sample Report Output
+
+See [`examples/sample_report.csv`](examples/sample_report.csv) for a complete example.
 
 ```csv
 timestamp,case_id,status,source_path,dest_path,message
