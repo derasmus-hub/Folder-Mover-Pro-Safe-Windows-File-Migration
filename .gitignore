@@ -7,7 +7,10 @@ __pycache__/
 venv/
 env/
 .venv/
-.env/
+
+# Environment files (do not commit secrets)
+.env
+.env.*
 
 # IDE settings
 .vscode/
@@ -15,9 +18,10 @@ env/
 *.swp
 *.swo
 
-# Distribution / packaging
-build/pyinstaller/
+# Distribution / packaging (PyInstaller + Python builds)
+build/
 dist/
+*.spec
 *.egg-info/
 *.egg
 
@@ -27,9 +31,8 @@ dist/
 htmlcov/
 .tox/
 
-# Logs and reports
+# Logs
 *.log
-*.csv
 
 # OS files
 .DS_Store
@@ -37,16 +40,24 @@ Thumbs.db
 Desktop.ini
 
 # Local config
-.env
 *.local
+
+# Generated reports (default: ignore)
+*.csv
+
+# ...but keep example CSVs and any intentionally shared artifacts
+!examples/**/*.csv
+!upwork_artifacts/**/*.csv
 
 # Local test artifacts (project-specific)
 make_test_excel.py
 test_cases.xlsx
 test_source/
 test_dest/
+demo_source/
+demo_dest/
 
-# Safety: reports generated during runs
+# Safety: reports generated during runs (extra explicit patterns)
 final_*.csv
 dryrun_*.csv
 move*.csv

@@ -1,0 +1,19 @@
+timestamp,case_id,status,source_path,dest_path,message
+2024-01-15 10:30:00,,PARAMETER,,,version=0.1.0
+2024-01-15 10:30:00,,PARAMETER,,,timestamp=2024-01-15T10:30:00.000000
+2024-01-15 10:30:00,,PARAMETER,,,excel_file=C:\Data\caselist.xlsx
+2024-01-15 10:30:00,,PARAMETER,,,source_root=C:\Data\Source
+2024-01-15 10:30:00,,PARAMETER,,,dest_root=C:\Data\Dest
+2024-01-15 10:30:00,,PARAMETER,,,dry_run=False
+2024-01-15 10:30:00,,PARAMETER,,,report=C:\Data\report.csv
+2024-01-15 10:30:00,,PARAMETER,,,sheet=(active)
+2024-01-15 10:30:00,,PARAMETER,,,--- END PARAMETERS ---
+2024-01-15 10:30:00,00123,MOVED,C:\Source\Projects\Case_00123_Smith,C:\Dest\Case_00123_Smith,Moved successfully
+2024-01-15 10:30:01,00456,MOVED_RENAMED,C:\Source\Archive\Case_00456_Jones,C:\Dest\Case_00456_Jones_1,Moved successfully (renamed from Case_00456_Jones to Case_00456_Jones_1)
+2024-01-15 10:30:02,00789,MULTIPLE_MATCHES,C:\Source\2023\Case_00789_Active,C:\Dest\Case_00789_Active,[Multiple matches] Moved successfully
+2024-01-15 10:30:02,00789,MULTIPLE_MATCHES,C:\Source\2024\Case_00789_Renewed,C:\Dest\Case_00789_Renewed,[Multiple matches] Moved successfully
+2024-01-15 10:30:03,00111,SKIPPED_MISSING,C:\Source\Old\Case_00111,,Source folder no longer exists (may have been moved already)
+2024-01-15 10:30:04,00222,SKIPPED_EXISTS,C:\Source\Case_00222,C:\Dest\Case_00222,Destination already exists
+2024-01-15 10:30:05,99999,NOT_FOUND,,,No matching folders found for this CaseID
+2024-01-15 10:30:06,88888,NOT_FOUND,,,No matching folders found for this CaseID
+2024-01-15 10:30:07,00333,ERROR,C:\Source\Locked\Case_00333,,PermissionError: [WinError 5] Access is denied
