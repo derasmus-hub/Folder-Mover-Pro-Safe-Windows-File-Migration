@@ -39,3 +39,12 @@ Desktop.ini
 # Local config
 .env
 *.local
+
+
+# Local test artifacts
+make_test_excel.py
+test_cases.xlsx
+test_source/
+test_dest/
+dryrun_report.csv
+move1_report.csv
