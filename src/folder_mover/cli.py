@@ -25,7 +25,7 @@ from .indexer import (
     match_caseids,
     scan_folders,
 )
-from .mover import FolderMover
+from .mover import FolderMover, scan_quarantined_duplicates, DUPLICATES_FOLDER
 from .report import ReportWriter
 from .types import FolderMatch, MoveStatus
 
@@ -137,20 +137,26 @@ Notes:
         """
     )
 
-    # Positional arguments
+    # Positional arguments (optional when using --list-duplicates)
     parser.add_argument(
         "excel_file",
         type=Path,
+        nargs="?",
+        default=None,
         help="Path to Excel XLSX file with CaseIDs in Column A"
     )
     parser.add_argument(
         "source_root",
         type=Path,
+        nargs="?",
+        default=None,
         help="Root directory to search for matching folders"
     )
     parser.add_argument(
         "dest_root",
         type=Path,
+        nargs="?",
+        default=None,
         help="Destination directory where matched folders will be moved"
     )
 
@@ -247,6 +253,21 @@ Notes:
         metavar="CSV",
         help="Resume from a previous report, skipping folders already moved (MOVED/MOVED_RENAMED status)"
     )
+    parser.add_argument(
+        "--duplicates-action",
+        type=str,
+        choices=["quarantine", "skip", "move-all"],
+        default="quarantine",
+        dest="duplicates_action",
+        metavar="ACTION",
+        help="How to handle CaseIDs with multiple matches: 'quarantine' (move to _DUPLICATES/<case_id>/, default), 'skip' (don't move), 'move-all' (move all to main dest)"
+    )
+    parser.add_argument(
+        "--list-duplicates",
+        action="store_true",
+        dest="list_duplicates",
+        help="List quarantined duplicates with age information. Use with dest_root only. Outputs to console and CSV if --report is provided."
+    )
 
     # Verbosity
     parser.add_argument(
@@ -336,6 +357,7 @@ def get_run_parameters(args: argparse.Namespace) -> Dict[str, str]:
         "exclude_patterns": ",".join(args.exclude_patterns) if args.exclude_patterns else "",
         "on_dest_exists": args.on_dest_exists,
         "resume_report": str(args.resume_report.resolve()) if args.resume_report else "",
+        "duplicates_action": args.duplicates_action,
     }
     return params
 
@@ -403,6 +425,8 @@ def print_banner(args: argparse.Namespace) -> None:
         print(f"Exclusions:   {', '.join(args.exclude_patterns)}")
     if args.on_dest_exists != "rename":
         print(f"On exists:    {args.on_dest_exists}")
+    if args.duplicates_action != "quarantine":
+        print(f"Duplicates:   {args.duplicates_action}")
     if args.resume_report:
         print(f"Resume from:  {args.resume_report}")
 
@@ -443,17 +467,30 @@ def print_summary(
         print(f"  Would move:            {dry_count}")
         if move_stats.get("dry_run_renamed", 0):
             print(f"    (with rename:        {move_stats.get('dry_run_renamed', 0)})")
+        # Quarantine dry-run stats
+        dry_quarantine = move_stats.get("dry_run_quarantine", 0) + move_stats.get("dry_run_quarantine_renamed", 0)
+        if dry_quarantine:
+            print(f"  Would quarantine:      {dry_quarantine}")
+            if move_stats.get("dry_run_quarantine_renamed", 0):
+                print(f"    (with rename:        {move_stats.get('dry_run_quarantine_renamed', 0)})")
     else:
         moved = move_stats.get("success", 0) + move_stats.get("success_renamed", 0)
         print(f"  Moved:                 {moved}")
         if move_stats.get("success_renamed", 0):
             print(f"    (with rename:        {move_stats.get('success_renamed', 0)})")
+        # Quarantine stats
+        quarantined = move_stats.get("quarantined", 0) + move_stats.get("quarantined_renamed", 0)
+        if quarantined:
+            print(f"  Quarantined:           {quarantined}")
+            if move_stats.get("quarantined_renamed", 0):
+                print(f"    (with rename:        {move_stats.get('quarantined_renamed', 0)})")
 
     skipped = (
         move_stats.get("skipped_missing", 0) +
         move_stats.get("skipped_exists", 0) +
         move_stats.get("skipped_excluded", 0) +
-        move_stats.get("skipped_resume", 0)
+        move_stats.get("skipped_resume", 0) +
+        move_stats.get("skipped_duplicate", 0)
     )
     if skipped:
         print(f"  Skipped:               {skipped}")
@@ -465,12 +502,91 @@ def print_summary(
             print(f"    (excluded:           {move_stats.get('skipped_excluded', 0)})")
         if move_stats.get("skipped_resume", 0):
             print(f"    (resume skip:        {move_stats.get('skipped_resume', 0)})")
+        if move_stats.get("skipped_duplicate", 0):
+            print(f"    (duplicate skip:     {move_stats.get('skipped_duplicate', 0)})")
 
     errors = move_stats.get("error", 0)
     if errors:
         print(f"  Errors:                {errors}")
 
     print(f"{'='*60}\n")
+
+
+def list_quarantined_duplicates(dest_root: Path, report_path: Path = None) -> int:
+    """
+    List quarantined duplicates with age information.
+
+    Args:
+        dest_root: Destination root directory containing _DUPLICATES
+        report_path: Optional path to write CSV report
+
+    Returns:
+        Exit code (0 for success, non-zero for errors)
+    """
+    duplicates_dir = dest_root / DUPLICATES_FOLDER
+
+    if not dest_root.exists():
+        print(f"Error: Destination root not found: {dest_root}", file=sys.stderr)
+        return 1
+
+    if not duplicates_dir.exists():
+        print(f"\nNo quarantine folder found at: {duplicates_dir}")
+        print("No duplicates have been quarantined yet.")
+        return 0
+
+    print(f"\n{'='*80}")
+    print(f"Quarantined Duplicates Report")
+    print(f"{'='*80}")
+    print(f"Location: {duplicates_dir}")
+    print()
+
+    duplicates = scan_quarantined_duplicates(dest_root)
+
+    if not duplicates:
+        print("No quarantined duplicates found.")
+        return 0
+
+    # Print table header
+    print(f"{'CaseID':<15} {'Age (days)':<12} {'Last Modified':<20} {'Folder Name'}")
+    print(f"{'-'*15} {'-'*12} {'-'*20} {'-'*40}")
+
+    # Print each duplicate
+    for dup in duplicates:
+        modified_str = dup.last_modified.strftime("%Y-%m-%d %H:%M")
+        print(f"{dup.case_id:<15} {dup.age_days:<12} {modified_str:<20} {dup.folder_name}")
+
+    print()
+    print(f"Total: {len(duplicates)} quarantined folder(s)")
+
+    # Group by case_id for summary
+    case_ids = set(d.case_id for d in duplicates)
+    print(f"Unique CaseIDs: {len(case_ids)}")
+
+    # Age summary
+    if duplicates:
+        oldest = max(d.age_days for d in duplicates)
+        newest = min(d.age_days for d in duplicates)
+        print(f"Age range: {newest} - {oldest} days")
+
+    print(f"{'='*80}\n")
+
+    # Write CSV if report path provided
+    if report_path:
+        print(f"Writing report to: {report_path}")
+        with open(report_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["case_id", "folder_path", "folder_name", "last_modified", "age_days"])
+            for dup in duplicates:
+                writer.writerow([
+                    dup.case_id,
+                    dup.folder_path,
+                    dup.folder_name,
+                    dup.last_modified.isoformat(),
+                    dup.age_days
+                ])
+        print(f"Wrote {len(duplicates)} entries to report.")
+
+    return 0
 
 
 def main(argv: list = None) -> int:
@@ -490,6 +606,23 @@ def main(argv: list = None) -> int:
 
     logger.info(f"{PRODUCT_NAME} v{__version__}")
     logger.debug(f"Arguments: {args}")
+
+    # Handle --list-duplicates mode (only needs dest_root)
+    if args.list_duplicates:
+        # When using --list-duplicates, the first positional arg is dest_root
+        # (it gets assigned to excel_file since that's the first positional)
+        dest_root = args.excel_file
+        if dest_root is None:
+            print("Error: dest_root is required for --list-duplicates", file=sys.stderr)
+            print("Usage: folder-mover --list-duplicates <dest_root> [--report CSV]", file=sys.stderr)
+            return 1
+        return list_quarantined_duplicates(dest_root, args.report)
+
+    # For normal mode, require all positional arguments
+    if args.excel_file is None or args.source_root is None or args.dest_root is None:
+        print("Error: excel_file, source_root, and dest_root are required", file=sys.stderr)
+        print("Usage: folder-mover <excel_file> <source_root> <dest_root> [options]", file=sys.stderr)
+        return 1
 
     # Validate paths before proceeding
     if not validate_paths(args):
@@ -577,6 +710,11 @@ def main(argv: list = None) -> int:
             already_moved = load_moved_paths_from_report(args.resume_report)
             print(f"  Found {len(already_moved)} already-moved folders to skip")
 
+        # Identify CaseIDs with multiple matches (duplicates)
+        duplicate_case_ids = {cid for cid, count in match_counts.items() if count > 1}
+        if duplicate_case_ids and args.duplicates_action != "move-all":
+            print(f"  CaseIDs with duplicates: {len(duplicate_case_ids)} (action: {args.duplicates_action})")
+
         # Step 4: Move folders (or dry-run)
         mode_str = "DRY RUN" if args.dry_run else "Moving"
         print(f"\nStep 4: {mode_str} {len(all_matches)} folders...")
@@ -587,7 +725,9 @@ def main(argv: list = None) -> int:
             max_moves=args.max_moves,
             exclude_patterns=args.exclude_patterns,
             on_dest_exists=args.on_dest_exists,
-            already_moved_paths=already_moved
+            already_moved_paths=already_moved,
+            duplicates_action=args.duplicates_action,
+            duplicate_case_ids=duplicate_case_ids
         )
 
         results = mover.move_all(all_matches)

@@ -43,9 +43,15 @@ class MoveStatus(Enum):
     SKIPPED_EXISTS = "skipped_exists"    # Already at destination
     SKIPPED_EXCLUDED = "skipped_excluded"  # Folder matched exclusion pattern
     SKIPPED_RESUME = "skipped_resume"    # Already processed in previous run
+    SKIPPED_DUPLICATE = "skipped_duplicate"  # Skipped due to --duplicates-action=skip
     ERROR = "error"                  # Failed due to error
     DRY_RUN = "dry_run"              # Would move (dry run mode)
     DRY_RUN_RENAMED = "dry_run_renamed"  # Would move with rename (dry run)
+    # Quarantine statuses for duplicate handling
+    QUARANTINED = "quarantined"      # Moved to _DUPLICATES quarantine folder
+    QUARANTINED_RENAMED = "quarantined_renamed"  # Quarantined with rename
+    DRY_RUN_QUARANTINE = "dry_run_quarantine"  # Would quarantine (dry run)
+    DRY_RUN_QUARANTINE_RENAMED = "dry_run_quarantine_renamed"  # Would quarantine with rename
 
 
 @dataclass
@@ -78,12 +84,21 @@ class ReportStatus(Enum):
     SKIPPED_EXISTS = "SKIPPED_EXISTS"    # Already at destination
     SKIPPED_EXCLUDED = "SKIPPED_EXCLUDED"  # Folder matched exclusion pattern
     SKIPPED_RESUME = "SKIPPED_RESUME"    # Already processed in previous run
+    SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE"  # Duplicate skipped (--duplicates-action=skip)
     ERROR = "ERROR"                      # Operation failed
+    # Quarantine statuses for duplicate handling
+    QUARANTINED = "QUARANTINED"          # Moved to _DUPLICATES folder
+    QUARANTINED_RENAMED = "QUARANTINED_RENAMED"  # Quarantined with rename
+    FOUND_DRYRUN_QUARANTINE = "FOUND_DRYRUN_QUARANTINE"  # Would quarantine
+    FOUND_DRYRUN_QUARANTINE_RENAMED = "FOUND_DRYRUN_QUARANTINE_RENAMED"  # Would quarantine with rename
 
     @classmethod
     def from_move_status(cls, status: MoveStatus, is_multiple: bool = False):
         """Convert MoveStatus to ReportStatus."""
-        if is_multiple:
+        # Note: is_multiple flag is now deprecated for quarantine workflow
+        # but kept for backward compatibility with move-all mode
+        if is_multiple and status in (MoveStatus.SUCCESS, MoveStatus.SUCCESS_RENAMED,
+                                       MoveStatus.DRY_RUN, MoveStatus.DRY_RUN_RENAMED):
             return cls.MULTIPLE_MATCHES
 
         mapping = {
@@ -93,9 +108,14 @@ class ReportStatus(Enum):
             MoveStatus.SKIPPED_EXISTS: cls.SKIPPED_EXISTS,
             MoveStatus.SKIPPED_EXCLUDED: cls.SKIPPED_EXCLUDED,
             MoveStatus.SKIPPED_RESUME: cls.SKIPPED_RESUME,
+            MoveStatus.SKIPPED_DUPLICATE: cls.SKIPPED_DUPLICATE,
             MoveStatus.ERROR: cls.ERROR,
             MoveStatus.DRY_RUN: cls.FOUND_DRYRUN,
             MoveStatus.DRY_RUN_RENAMED: cls.FOUND_DRYRUN_RENAMED,
+            MoveStatus.QUARANTINED: cls.QUARANTINED,
+            MoveStatus.QUARANTINED_RENAMED: cls.QUARANTINED_RENAMED,
+            MoveStatus.DRY_RUN_QUARANTINE: cls.FOUND_DRYRUN_QUARANTINE,
+            MoveStatus.DRY_RUN_QUARANTINE_RENAMED: cls.FOUND_DRYRUN_QUARANTINE_RENAMED,
         }
         return mapping.get(status, cls.ERROR)
 

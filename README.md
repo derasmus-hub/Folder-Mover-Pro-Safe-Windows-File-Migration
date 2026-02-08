@@ -120,6 +120,8 @@ python -m folder_mover <excel_file> <source_root> <dest_root> [options]
 | `--matcher ALGO` | Matching algorithm: `bucket` (default) or `aho` (faster, requires pyahocorasick) |
 | `--exclude-pattern PAT` | Exclude folders matching pattern (can be specified multiple times) |
 | `--on-dest-exists ACTION` | Action when destination exists: `rename` (default) or `skip` |
+| `--duplicates-action ACTION` | How to handle CaseIDs with multiple matches: `quarantine` (default), `skip`, or `move-all` |
+| `--list-duplicates` | List quarantined duplicates with age information (does not move any folders) |
 | `--resume-from-report CSV` | Resume from previous report, skipping already-moved folders |
 | `-v, --verbose` | Increase verbosity (-v for INFO, -vv for DEBUG) |
 | `--version` | Show version and exit |
@@ -223,6 +225,10 @@ When using `--report`, a detailed CSV file is generated with the following colum
 | `SKIPPED_EXISTS` | Destination already exists |
 | `SKIPPED_EXCLUDED` | Folder matched an exclusion pattern |
 | `SKIPPED_RESUME` | Already moved in previous run (resume mode) |
+| `SKIPPED_DUPLICATE` | Duplicate CaseID skipped (`--duplicates-action skip`) |
+| `QUARANTINED` | Moved to `_DUPLICATES/<CaseID>/` folder |
+| `QUARANTINED_RENAMED` | Quarantined with rename due to collision |
+| `FOUND_DRYRUN_QUARANTINE` | Would quarantine (dry-run mode) |
 | `ERROR` | Operation failed (see message for details) |
 
 ### Sample Report Output
@@ -345,6 +351,77 @@ python -m folder_mover cases.xlsx Source Dest --exclude-pattern "*.tmp" --exclud
 python -m folder_mover cases.xlsx Source Dest --on-dest-exists skip
 ```
 
+**Duplicate CaseID Handling** (`--duplicates-action`):
+When a CaseID matches multiple folders, you can choose how to handle them:
+- `quarantine` (default): Move all matching folders to `Dest\_DUPLICATES\<CaseID>\` for manual review
+- `skip`: Do not move duplicates, only report them
+- `move-all`: Move all to main destination (previous behavior)
+
+```bash
+# Quarantine duplicates for review (default)
+python -m folder_mover cases.xlsx Source Dest --duplicates-action quarantine
+
+# Skip duplicates entirely
+python -m folder_mover cases.xlsx Source Dest --duplicates-action skip
+
+# Move all (old behavior)
+python -m folder_mover cases.xlsx Source Dest --duplicates-action move-all
+```
+
+Quarantine structure example:
+```
+Dest\
+├── Case_00001\              <- Single match: moved normally
+├── Case_00002\              <- Single match: moved normally
+└── _DUPLICATES\
+    └── 00123\               <- CaseID with multiple matches
+        ├── Case_00123_A\    <- First match
+        └── Case_00123_B\    <- Second match
+```
+
+**Reviewing Quarantined Duplicates** (`--list-duplicates`):
+After migration, review quarantined folders with age information:
+
+```bash
+# List quarantined duplicates to console
+python -m folder_mover --list-duplicates C:\Dest
+
+# Export to CSV for review
+python -m folder_mover --list-duplicates C:\Dest --report duplicates_review.csv
+```
+
+Example output:
+```
+Quarantined Duplicates Report
+=============================
+Destination: C:\Dest
+
+CaseID      Folder Name         Age (days)  Last Modified
+-----------------------------------------------------------------
+00123       Case_00123_A              45    2024-11-25 14:30:00
+00123       Case_00123_B              45    2024-11-25 14:32:00
+00456       Case_00456_2023           30    2024-12-10 09:15:00
+00456       Case_00456_2024           30    2024-12-10 09:16:00
+
+Total: 4 quarantined folders from 2 CaseIDs
+```
+
+**Cleanup Old Duplicates** (`scripts/Cleanup-Duplicates.ps1`):
+After reviewing and resolving duplicates, clean up old quarantined folders:
+
+```powershell
+# Preview what would be deleted (default - safe, no changes)
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest
+
+# Preview folders older than 60 days
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -OlderThanDays 60
+
+# Actually delete (requires typing DELETE to confirm)
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -WhatIf:$false -ConfirmDelete
+```
+
+Safety features: Preview mode by default, requires explicit `-ConfirmDelete` switch, requires typing `DELETE` to confirm, only operates on `_DUPLICATES` folder.
+
 **Resume from Previous Run** (`--resume-from-report`):
 If a run is interrupted, resume by passing the previous report. Folders with status `MOVED` or `MOVED_RENAMED` will be skipped:
 
@@ -380,7 +457,11 @@ folder-mover/
 ├── tests/                  # Unit tests
 ├── docs/
 │   └── CLIENT_HANDOFF.md   # Client deployment guide
-├── release/scripts/        # PowerShell helper scripts
+├── scripts/                # PowerShell utility scripts
+│   ├── Cleanup-Duplicates.ps1  # Quarantine cleanup script
+│   ├── Run-FolderMoverPro.ps1  # Wrapper for exe
+│   └── Run-FromSource.ps1      # Run from Python source
+├── release/scripts/        # Example scripts
 │   ├── run_dryrun_example.ps1
 │   ├── run_live_example.ps1
 │   └── create_test_tree.ps1

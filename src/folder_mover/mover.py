@@ -18,6 +18,8 @@ import logging
 import os
 import shutil
 import sys
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Set, Union
 
@@ -31,7 +33,88 @@ from .utils import (
 # Type for on_dest_exists behavior
 DestExistsBehavior = Literal["rename", "skip"]
 
+# Type for duplicates action
+DuplicatesAction = Literal["quarantine", "skip", "move-all"]
+
+# Quarantine folder name
+DUPLICATES_FOLDER = "_DUPLICATES"
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class QuarantinedDuplicate:
+    """Information about a quarantined duplicate folder."""
+    case_id: str
+    folder_path: str
+    folder_name: str
+    last_modified: datetime
+    age_days: int
+
+
+def scan_quarantined_duplicates(
+    dest_root: Union[str, Path],
+    reference_time: Optional[datetime] = None
+) -> List[QuarantinedDuplicate]:
+    """
+    Scan the _DUPLICATES folder and return information about quarantined folders.
+
+    Args:
+        dest_root: The destination root directory containing _DUPLICATES
+        reference_time: Reference time for age calculation (default: now)
+
+    Returns:
+        List of QuarantinedDuplicate objects sorted by age (oldest first)
+    """
+    dest_root = Path(dest_root)
+    duplicates_dir = dest_root / DUPLICATES_FOLDER
+
+    if not duplicates_dir.exists():
+        logger.info(f"No duplicates folder found at {duplicates_dir}")
+        return []
+
+    if reference_time is None:
+        reference_time = datetime.now()
+
+    results: List[QuarantinedDuplicate] = []
+
+    # Iterate over case_id subdirectories
+    for case_id_dir in duplicates_dir.iterdir():
+        if not case_id_dir.is_dir():
+            continue
+
+        case_id = case_id_dir.name
+
+        # Iterate over folder entries within each case_id
+        for folder_entry in case_id_dir.iterdir():
+            if not folder_entry.is_dir():
+                continue
+
+            try:
+                # Get modification time
+                stat_info = folder_entry.stat()
+                mtime = datetime.fromtimestamp(stat_info.st_mtime)
+
+                # Calculate age in days
+                age_delta = reference_time - mtime
+                age_days = age_delta.days
+
+                results.append(QuarantinedDuplicate(
+                    case_id=case_id,
+                    folder_path=str(folder_entry),
+                    folder_name=folder_entry.name,
+                    last_modified=mtime,
+                    age_days=age_days
+                ))
+            except OSError as e:
+                logger.warning(f"Could not stat {folder_entry}: {e}")
+                continue
+
+    # Sort by age (oldest first)
+    results.sort(key=lambda x: x.age_days, reverse=True)
+
+    logger.info(f"Found {len(results)} quarantined duplicates")
+    return results
 
 
 def matches_exclusion_pattern(folder_name: str, patterns: List[str]) -> Optional[str]:
@@ -252,7 +335,9 @@ class FolderMover:
         max_moves: Optional[int] = None,
         exclude_patterns: Optional[List[str]] = None,
         on_dest_exists: DestExistsBehavior = "rename",
-        already_moved_paths: Optional[Set[str]] = None
+        already_moved_paths: Optional[Set[str]] = None,
+        duplicates_action: DuplicatesAction = "quarantine",
+        duplicate_case_ids: Optional[Set[str]] = None
     ):
         """
         Initialize the mover with destination settings.
@@ -266,6 +351,11 @@ class FolderMover:
                            or "skip" (skip the move)
             already_moved_paths: Set of source paths already moved in a previous run
                                 (for resume functionality)
+            duplicates_action: How to handle CaseIDs with multiple matches:
+                              "quarantine" (move to _DUPLICATES/<case_id>/),
+                              "skip" (don't move, just report),
+                              "move-all" (move all to main dest, old behavior)
+            duplicate_case_ids: Set of CaseIDs that have multiple folder matches
         """
         self.dest_root = Path(dest_root)
         self.dry_run = dry_run
@@ -273,6 +363,8 @@ class FolderMover:
         self.exclude_patterns = exclude_patterns or []
         self.on_dest_exists = on_dest_exists
         self.already_moved_paths = already_moved_paths or set()
+        self.duplicates_action = duplicates_action
+        self.duplicate_case_ids = duplicate_case_ids or set()
 
         # Normalize already_moved_paths for consistent comparison
         self._normalized_moved_paths: Set[str] = set()
@@ -287,8 +379,44 @@ class FolderMover:
         # (prevents collisions between moves in the same batch)
         self._claimed_names: Set[str] = set()
 
+        # Track names claimed per quarantine case_id folder
+        self._quarantine_claimed: Dict[str, Set[str]] = {}
+
         # Statistics
         self._stats: Dict[MoveStatus, int] = {status: 0 for status in MoveStatus}
+
+    def _resolve_quarantine_destination(
+        self,
+        case_id: str,
+        folder_name: str
+    ) -> str:
+        """
+        Resolve destination path for a duplicate folder in quarantine.
+
+        Quarantine path: dest_root/_DUPLICATES/<case_id>/<folder_name>
+
+        Args:
+            case_id: The CaseID for grouping
+            folder_name: The original folder name
+
+        Returns:
+            Full path to quarantine destination (unique, may have suffix)
+        """
+        quarantine_root = self.dest_root / DUPLICATES_FOLDER / case_id
+
+        # Get or create claimed names set for this case_id
+        if case_id not in self._quarantine_claimed:
+            self._quarantine_claimed[case_id] = set()
+
+        claimed = self._quarantine_claimed[case_id]
+
+        dest_path = resolve_destination(quarantine_root, folder_name, claimed)
+
+        # Claim the name
+        dest_name = Path(dest_path).name
+        claimed.add(dest_name)
+
+        return dest_path
 
     def move_folder(self, match: FolderMatch) -> MoveResult:
         """
@@ -297,6 +425,7 @@ class FolderMover:
         Handles:
         - Exclusion patterns (SKIPPED_EXCLUDED)
         - Resume from previous run (SKIPPED_RESUME)
+        - Duplicate CaseIDs based on duplicates_action setting
         - Collisions by appending _1, _2, etc. or skipping based on on_dest_exists
         - Tracks claimed names to prevent collisions within a batch
 
@@ -308,6 +437,7 @@ class FolderMover:
         """
         src_path = Path(match.source_path)
         folder_name = match.folder_name
+        is_duplicate = match.case_id in self.duplicate_case_ids
 
         # Check exclusion patterns first
         if self.exclude_patterns:
@@ -354,6 +484,24 @@ class FolderMover:
             self._stats[result.status] += 1
             return result
 
+        # Handle duplicates based on duplicates_action
+        if is_duplicate and self.duplicates_action == "skip":
+            logger.info(f"Skipping duplicate (--duplicates-action=skip): {folder_name} (CaseID: {match.case_id})")
+            result = MoveResult(
+                case_id=match.case_id,
+                source_path=match.source_path,
+                dest_path=None,
+                status=MoveStatus.SKIPPED_DUPLICATE,
+                message=f"Duplicate CaseID skipped (--duplicates-action=skip)"
+            )
+            self._stats[result.status] += 1
+            return result
+
+        if is_duplicate and self.duplicates_action == "quarantine":
+            # Move to quarantine folder: dest_root/_DUPLICATES/<case_id>/<folder_name>
+            return self._move_to_quarantine(match)
+
+        # Default behavior (move-all) or single match: move to main destination
         # Check if destination with original name already exists
         original_dest = self.dest_root / folder_name
         original_dest_check = to_extended_length_path(str(original_dest)) if sys.platform == "win32" else str(original_dest)
@@ -401,6 +549,64 @@ class FolderMover:
             message = result.message
 
         # Create final result with case_id
+        final_result = MoveResult(
+            case_id=match.case_id,
+            source_path=result.source_path,
+            dest_path=result.dest_path,
+            status=status,
+            message=message
+        )
+
+        self._stats[final_result.status] += 1
+        return final_result
+
+    def _move_to_quarantine(self, match: FolderMatch) -> MoveResult:
+        """
+        Move a duplicate folder to the quarantine directory.
+
+        Quarantine path: dest_root/_DUPLICATES/<case_id>/<folder_name>
+
+        Args:
+            match: The FolderMatch describing the folder to move
+
+        Returns:
+            MoveResult with quarantine-specific status
+        """
+        src_path = Path(match.source_path)
+        folder_name = match.folder_name
+
+        # Resolve quarantine destination
+        dest_path = self._resolve_quarantine_destination(match.case_id, folder_name)
+        dest_name = Path(dest_path).name
+
+        logger.info(f"Quarantining duplicate: {match.source_path} -> {dest_path}")
+
+        # Perform the move
+        result = move_folder(src_path, dest_path, self.dry_run)
+
+        # Determine if this was a rename
+        was_renamed = dest_name != folder_name
+
+        # Map to quarantine-specific statuses
+        if result.status == MoveStatus.SUCCESS:
+            if was_renamed:
+                status = MoveStatus.QUARANTINED_RENAMED
+                message = f"Quarantined duplicate (renamed from {folder_name} to {dest_name})"
+            else:
+                status = MoveStatus.QUARANTINED
+                message = f"Quarantined duplicate to {dest_path}"
+        elif result.status == MoveStatus.DRY_RUN:
+            if was_renamed:
+                status = MoveStatus.DRY_RUN_QUARANTINE_RENAMED
+                message = f"Would quarantine to {dest_path} (renamed from {folder_name} to {dest_name})"
+            else:
+                status = MoveStatus.DRY_RUN_QUARANTINE
+                message = f"Would quarantine duplicate to {dest_path}"
+        else:
+            # Pass through other statuses (error, skipped, etc.)
+            status = result.status
+            message = result.message
+
         final_result = MoveResult(
             case_id=match.case_id,
             source_path=result.source_path,
@@ -479,11 +685,14 @@ class FolderMover:
         # Group by success/skip/error
         success_count = stats.get("success", 0) + stats.get("success_renamed", 0)
         dry_run_count = stats.get("dry_run", 0) + stats.get("dry_run_renamed", 0)
+        quarantine_count = stats.get("quarantined", 0) + stats.get("quarantined_renamed", 0)
+        dry_run_quarantine_count = stats.get("dry_run_quarantine", 0) + stats.get("dry_run_quarantine_renamed", 0)
         skipped_count = (
             stats.get("skipped_missing", 0) +
             stats.get("skipped_exists", 0) +
             stats.get("skipped_excluded", 0) +
-            stats.get("skipped_resume", 0)
+            stats.get("skipped_resume", 0) +
+            stats.get("skipped_duplicate", 0)
         )
         error_count = stats.get("error", 0)
 
@@ -493,12 +702,24 @@ class FolderMover:
                 lines.append(
                     f"    (with rename: {stats.get('dry_run_renamed', 0)})"
                 )
+            if dry_run_quarantine_count:
+                lines.append(f"  Would quarantine: {dry_run_quarantine_count}")
+                if stats.get("dry_run_quarantine_renamed", 0):
+                    lines.append(
+                        f"    (with rename: {stats.get('dry_run_quarantine_renamed', 0)})"
+                    )
         else:
             lines.append(f"  Moved: {success_count}")
             if stats.get("success_renamed", 0):
                 lines.append(
                     f"    (with rename: {stats.get('success_renamed', 0)})"
                 )
+            if quarantine_count:
+                lines.append(f"  Quarantined: {quarantine_count}")
+                if stats.get("quarantined_renamed", 0):
+                    lines.append(
+                        f"    (with rename: {stats.get('quarantined_renamed', 0)})"
+                    )
 
         if skipped_count:
             lines.append(f"  Skipped: {skipped_count}")
@@ -518,6 +739,10 @@ class FolderMover:
                 lines.append(
                     f"    (resume skip: {stats.get('skipped_resume', 0)})"
                 )
+            if stats.get("skipped_duplicate", 0):
+                lines.append(
+                    f"    (duplicate skip: {stats.get('skipped_duplicate', 0)})"
+                )
 
         if error_count:
             lines.append(f"  Errors: {error_count}")
@@ -528,3 +753,4 @@ class FolderMover:
         """Reset statistics and claimed names for a new batch."""
         self._stats = {status: 0 for status in MoveStatus}
         self._claimed_names.clear()
+        self._quarantine_claimed.clear()

@@ -201,6 +201,86 @@ FolderMoverPro.exe cases.xlsx C:\Source C:\Dest > migration.log 2>&1
 
 ---
 
+## Quarantine Cleanup
+
+When using duplicate quarantine (`--duplicates-action quarantine`), folders with multiple matches are moved to `_DUPLICATES/<CaseID>/` for manual review. After reviewing and resolving duplicates, you can clean up old quarantined folders.
+
+### List Quarantined Duplicates
+
+First, review what's in the quarantine folder:
+
+```cmd
+FolderMoverPro.exe --list-duplicates C:\Dest
+```
+
+Or export to CSV for detailed analysis:
+
+```cmd
+FolderMoverPro.exe --list-duplicates C:\Dest --report duplicates.csv
+```
+
+### Preview Cleanup (Default - Safe)
+
+The cleanup script runs in preview mode by default:
+
+```powershell
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest
+```
+
+This shows what WOULD be deleted (folders older than 30 days) without deleting anything.
+
+### Preview with Custom Age Threshold
+
+Delete only folders older than 60 days:
+
+```powershell
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -OlderThanDays 60
+```
+
+### Actually Delete Old Duplicates
+
+To actually delete, you must:
+1. Set `-WhatIf:$false`
+2. Add the `-ConfirmDelete` switch
+3. Type `DELETE` when prompted
+
+```powershell
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -OlderThanDays 30 -WhatIf:$false -ConfirmDelete
+```
+
+### Cleanup Safety Features
+
+The cleanup script has multiple safety layers:
+
+| Safety Feature | Description |
+|----------------|-------------|
+| **Preview by default** | `-WhatIf` is ON by default - always shows preview first |
+| **Quarantine-only** | Can ONLY delete from `_DUPLICATES` folder |
+| **Explicit switch** | Requires `-ConfirmDelete` to enable deletion |
+| **Type confirmation** | Must type `DELETE` to actually proceed |
+| **Age threshold** | Only deletes folders older than specified days |
+
+### Cleanup Workflow
+
+1. **After migration**, review quarantined duplicates:
+   ```cmd
+   FolderMoverPro.exe --list-duplicates C:\Dest
+   ```
+
+2. **Manually resolve** duplicates you care about (move correct version to main destination)
+
+3. **After 30+ days**, preview cleanup:
+   ```powershell
+   .\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest
+   ```
+
+4. **If satisfied**, run actual deletion:
+   ```powershell
+   .\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -WhatIf:$false -ConfirmDelete
+   ```
+
+---
+
 ## Maintenance
 
 No maintenance required. Standalone executable with no dependencies.

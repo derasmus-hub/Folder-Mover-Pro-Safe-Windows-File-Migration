@@ -104,7 +104,16 @@ The CSV report contains a `status` column with the following values:
 | `SKIPPED_EXISTS` | Destination already exists | May already be migrated |
 | `SKIPPED_EXCLUDED` | Matched exclusion pattern | Expected if using `--exclude-pattern` |
 | `SKIPPED_RESUME` | Already processed in previous run | Expected when using `--resume-from-report` |
-| `MULTIPLE_MATCHES` | CaseID matched multiple folders | All matches were moved |
+| `SKIPPED_DUPLICATE` | Duplicate CaseID skipped | Expected when using `--duplicates-action skip` |
+| `MULTIPLE_MATCHES` | CaseID matched multiple folders | Legacy status for `--duplicates-action move-all` |
+
+### Quarantine Statuses (for duplicate handling)
+
+| Status | Meaning | Action Required |
+|--------|---------|-----------------|
+| `QUARANTINED` | Moved to `_DUPLICATES/<CaseID>/` folder | Review quarantine folder |
+| `QUARANTINED_RENAMED` | Quarantined with rename | Check for same-name duplicates |
+| `FOUND_DRYRUN_QUARANTINE` | Would quarantine (dry run) | Review before live run |
 
 ### Error Status
 
@@ -164,17 +173,41 @@ Get-Content resume_report.csv | Select-Object -Skip 1 | Out-File combined_report
 
 ## Common Scenarios
 
-### Scenario 1: CaseID Matches Multiple Folders
+### Scenario 1: CaseID Matches Multiple Folders (Duplicates)
 
 **Situation:** CaseID `00123` matches both `Case_00123_2023` and `Case_00123_2024`.
 
-**Behavior:** Both folders are moved. Report shows `MULTIPLE_MATCHES` for each.
+**Default Behavior (`--duplicates-action quarantine`):**
+Both folders are moved to a quarantine folder for manual review.
+
+```powershell
+python -m folder_mover cases.xlsx C:\Source C:\Dest --report out.csv
+```
 
 **Example output:**
 ```csv
 case_id,status,source_path,dest_path,message
-00123,MULTIPLE_MATCHES,C:\Source\Case_00123_2023,C:\Dest\Case_00123_2023,[Multiple matches] Moved successfully
-00123,MULTIPLE_MATCHES,C:\Source\Case_00123_2024,C:\Dest\Case_00123_2024_1,[Multiple matches] Moved successfully (renamed)
+00123,QUARANTINED,C:\Source\Case_00123_2023,C:\Dest\_DUPLICATES\00123\Case_00123_2023,Quarantined duplicate
+00123,QUARANTINED,C:\Source\Case_00123_2024,C:\Dest\_DUPLICATES\00123\Case_00123_2024,Quarantined duplicate
+```
+
+**Result folder structure:**
+```
+C:\Dest\
+└── _DUPLICATES\
+    └── 00123\
+        ├── Case_00123_2023\
+        └── Case_00123_2024\
+```
+
+**Alternative: Skip duplicates entirely:**
+```powershell
+python -m folder_mover cases.xlsx C:\Source C:\Dest --duplicates-action skip
+```
+
+**Alternative: Move all to main dest (legacy behavior):**
+```powershell
+python -m folder_mover cases.xlsx C:\Source C:\Dest --duplicates-action move-all
 ```
 
 ### Scenario 2: Destination Already Has a Folder with Same Name
@@ -216,6 +249,53 @@ If you still encounter issues:
    ```
 2. Restart the system
 
+### Scenario 5: Reviewing Quarantined Duplicates
+
+**Situation:** After migration, you need to review and process quarantined duplicates.
+
+**Step 1: List quarantined duplicates with age information:**
+```powershell
+python -m folder_mover --list-duplicates C:\Dest
+```
+
+**Example output:**
+```
+Quarantined Duplicates Report
+=============================
+Destination: C:\Dest
+
+CaseID      Folder Name         Age (days)  Last Modified
+-----------------------------------------------------------------
+00123       Case_00123_A              45    2024-11-25 14:30:00
+00123       Case_00123_B              45    2024-11-25 14:32:00
+00456       Case_00456_2023           30    2024-12-10 09:15:00
+00456       Case_00456_2024           30    2024-12-10 09:16:00
+
+Total: 4 quarantined folders from 2 CaseIDs
+```
+
+**Step 2: Export to CSV for detailed analysis:**
+```powershell
+python -m folder_mover --list-duplicates C:\Dest --report duplicates_review.csv
+```
+
+**Step 3: Manual resolution:**
+- Review each CaseID's duplicates
+- Keep the correct folder (move to main destination)
+- Delete or archive the duplicates
+- The `_DUPLICATES` folder can be deleted when empty
+
+**Step 4: Automated cleanup (after 30+ days):**
+```powershell
+# Preview what would be deleted (safe - no changes)
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest
+
+# Actually delete old duplicates (requires typing DELETE)
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -WhatIf:$false -ConfirmDelete
+```
+
+See [RUNBOOK.md](../RUNBOOK.md#quarantine-cleanup) for full cleanup documentation.
+
 ---
 
 ## Checklist Before Production Run
@@ -244,6 +324,7 @@ Use this checklist before running on production data:
 - [ ] **Report reviewed** - All entries checked for errors
 - [ ] **Destination verified** - Folder count matches expectations
 - [ ] **NOT_FOUND reviewed** - Understood why some CaseIDs had no matches
+- [ ] **Duplicates reviewed** - Used `--list-duplicates` to check quarantine folder
 - [ ] **Report archived** - Saved for audit trail
 
 ---
@@ -267,6 +348,24 @@ python -m folder_mover data.xlsx Source Dest --on-dest-exists skip --report out.
 
 # Resume after interruption
 python -m folder_mover data.xlsx Source Dest --resume-from-report prev.csv --report resume.csv
+
+# Quarantine duplicates (default behavior)
+python -m folder_mover data.xlsx Source Dest --report out.csv
+
+# Skip duplicates entirely
+python -m folder_mover data.xlsx Source Dest --duplicates-action skip --report out.csv
+
+# List quarantined duplicates with age info
+python -m folder_mover --list-duplicates Dest
+
+# Export quarantine report to CSV
+python -m folder_mover --list-duplicates Dest --report duplicates.csv
+
+# Preview cleanup of old duplicates (30+ days)
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot Dest
+
+# Actually cleanup old duplicates
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot Dest -WhatIf:$false -ConfirmDelete
 
 # Full run with all safety features
 python -m folder_mover data.xlsx Source Dest `

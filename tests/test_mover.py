@@ -2,16 +2,21 @@
 Unit tests for the folder mover.
 """
 
+import os
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from folder_mover.mover import (
+    DUPLICATES_FOLDER,
     FolderMover,
+    QuarantinedDuplicate,
     matches_exclusion_pattern,
     move_folder,
     resolve_destination,
+    scan_quarantined_duplicates,
 )
 from folder_mover.types import FolderMatch, MoveStatus
 
@@ -807,3 +812,455 @@ class TestSafetyFeaturesCombined:
             assert results[1].status == MoveStatus.SKIPPED_RESUME
             assert results[2].status == MoveStatus.SKIPPED_EXISTS
             assert results[3].status == MoveStatus.SUCCESS
+
+
+class TestDuplicatesHandling:
+    """Tests for duplicate CaseID handling."""
+
+    def test_quarantine_duplicates(self):
+        """Quarantine moves duplicates to _DUPLICATES/<case_id>/."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Create two folders matching same CaseID
+            src1 = base / "loc1" / "Case_00123_A"
+            src2 = base / "loc2" / "Case_00123_B"
+            src1.mkdir(parents=True)
+            src2.mkdir(parents=True)
+            (src1 / "file1.txt").write_text("content1")
+            (src2 / "file2.txt").write_text("content2")
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            # Both should be quarantined
+            assert results[0].status == MoveStatus.QUARANTINED
+            assert results[1].status == MoveStatus.QUARANTINED
+
+            # Check quarantine folder structure
+            quarantine_dir = dest_root / "_DUPLICATES" / "00123"
+            assert quarantine_dir.exists()
+            assert (quarantine_dir / "Case_00123_A").exists()
+            assert (quarantine_dir / "Case_00123_B").exists()
+            assert (quarantine_dir / "Case_00123_A" / "file1.txt").exists()
+            assert (quarantine_dir / "Case_00123_B" / "file2.txt").exists()
+
+    def test_quarantine_with_collision(self):
+        """Quarantine handles name collisions within quarantine folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Create folders with same name matching same CaseID
+            src1 = base / "loc1" / "Case_00123"
+            src2 = base / "loc2" / "Case_00123"
+            src1.mkdir(parents=True)
+            src2.mkdir(parents=True)
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123"),
+                FolderMatch("00123", str(src2), "Case_00123"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            assert results[0].status == MoveStatus.QUARANTINED
+            assert results[1].status == MoveStatus.QUARANTINED_RENAMED
+
+            quarantine_dir = dest_root / "_DUPLICATES" / "00123"
+            assert (quarantine_dir / "Case_00123").exists()
+            assert (quarantine_dir / "Case_00123_1").exists()
+
+    def test_skip_duplicates(self):
+        """Skip duplicates does not move anything."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123_B"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="skip",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            # Both should be skipped
+            assert results[0].status == MoveStatus.SKIPPED_DUPLICATE
+            assert results[1].status == MoveStatus.SKIPPED_DUPLICATE
+
+            # Sources should still exist
+            assert src1.exists()
+            assert src2.exists()
+
+            # Dest should be empty
+            assert list(dest_root.iterdir()) == []
+
+    def test_move_all_duplicates(self):
+        """Move-all moves duplicates to main destination (old behavior)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123_B"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="move-all",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            # Both should be moved to main dest
+            assert results[0].status == MoveStatus.SUCCESS
+            assert results[1].status == MoveStatus.SUCCESS
+
+            # Check they're in main dest, not quarantine
+            assert (dest_root / "Case_00123_A").exists()
+            assert (dest_root / "Case_00123_B").exists()
+            assert not (dest_root / "_DUPLICATES").exists()
+
+    def test_single_match_not_affected_by_duplicates_action(self):
+        """Single matches are not affected by duplicates_action setting."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src = base / "Case_00123"
+            src.mkdir()
+
+            match = FolderMatch("00123", str(src), "Case_00123")
+
+            # Even with quarantine action, single match goes to main dest
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="quarantine",
+                duplicate_case_ids=set()  # 00123 is NOT in duplicates
+            )
+            result = mover.move_folder(match)
+
+            assert result.status == MoveStatus.SUCCESS
+            assert (dest_root / "Case_00123").exists()
+            assert not (dest_root / "_DUPLICATES").exists()
+
+    def test_quarantine_dry_run(self):
+        """Dry run shows correct quarantine destination."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123_B"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                dry_run=True,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            assert results[0].status == MoveStatus.DRY_RUN_QUARANTINE
+            assert results[1].status == MoveStatus.DRY_RUN_QUARANTINE
+
+            # Sources should still exist
+            assert src1.exists()
+            assert src2.exists()
+
+            # Quarantine folder should not be created
+            assert not (dest_root / "_DUPLICATES").exists()
+
+            # Check dest_path points to quarantine
+            assert "_DUPLICATES" in results[0].dest_path
+            assert "00123" in results[0].dest_path
+
+    def test_quarantine_stats_tracked(self):
+        """Stats track quarantined folders."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+
+            # Pre-create a collision in quarantine
+            quarantine_dir = dest_root / "_DUPLICATES" / "00123" / "Case_00123"
+            quarantine_dir.mkdir(parents=True)
+
+            results = mover.move_all(matches)
+
+            stats = mover.get_stats()
+            assert stats["quarantined"] == 1
+            assert stats["quarantined_renamed"] == 1
+
+    def test_mixed_single_and_duplicate_caseids(self):
+        """Correctly handles mix of single and duplicate CaseIDs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Single match CaseID
+            src_single = base / "Case_00001"
+            src_single.mkdir()
+
+            # Duplicate match CaseID
+            src_dup1 = base / "Case_00002_A"
+            src_dup2 = base / "Case_00002_B"
+            src_dup1.mkdir()
+            src_dup2.mkdir()
+
+            matches = [
+                FolderMatch("00001", str(src_single), "Case_00001"),
+                FolderMatch("00002", str(src_dup1), "Case_00002_A"),
+                FolderMatch("00002", str(src_dup2), "Case_00002_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00002"}  # Only 00002 is duplicate
+            )
+            results = mover.move_all(matches)
+
+            # Single goes to main dest
+            assert results[0].status == MoveStatus.SUCCESS
+            assert (dest_root / "Case_00001").exists()
+
+            # Duplicates go to quarantine
+            assert results[1].status == MoveStatus.QUARANTINED
+            assert results[2].status == MoveStatus.QUARANTINED
+            quarantine_dir = dest_root / "_DUPLICATES" / "00002"
+            assert (quarantine_dir / "Case_00002_A").exists()
+            assert (quarantine_dir / "Case_00002_B").exists()
+
+
+class TestScanQuarantinedDuplicates:
+    """Tests for scan_quarantined_duplicates function."""
+
+    def test_no_duplicates_folder(self):
+        """Returns empty list when _DUPLICATES folder doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmp:
+            result = scan_quarantined_duplicates(tmp)
+            assert result == []
+
+    def test_empty_duplicates_folder(self):
+        """Returns empty list when _DUPLICATES folder is empty."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            duplicates_dir.mkdir()
+
+            result = scan_quarantined_duplicates(tmp)
+            assert result == []
+
+    def test_scans_single_duplicate(self):
+        """Scans a single quarantined duplicate folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Create quarantine structure: _DUPLICATES/00123/Case_00123_A/
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            case_dir = duplicates_dir / "00123"
+            folder = case_dir / "Case_00123_A"
+            folder.mkdir(parents=True)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 1
+            assert result[0].case_id == "00123"
+            assert result[0].folder_name == "Case_00123_A"
+            assert "Case_00123_A" in result[0].folder_path
+
+    def test_scans_multiple_duplicates_same_caseid(self):
+        """Scans multiple folders under same CaseID."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            case_dir = duplicates_dir / "00123"
+            (case_dir / "Case_00123_A").mkdir(parents=True)
+            (case_dir / "Case_00123_B").mkdir(parents=True)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 2
+            folder_names = {r.folder_name for r in result}
+            assert folder_names == {"Case_00123_A", "Case_00123_B"}
+
+    def test_scans_multiple_caseids(self):
+        """Scans folders from multiple CaseIDs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            (duplicates_dir / "00123" / "Folder_A").mkdir(parents=True)
+            (duplicates_dir / "00456" / "Folder_B").mkdir(parents=True)
+            (duplicates_dir / "00789" / "Folder_C").mkdir(parents=True)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 3
+            case_ids = {r.case_id for r in result}
+            assert case_ids == {"00123", "00456", "00789"}
+
+    def test_age_calculation_days(self):
+        """Calculates age in days correctly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            folder = duplicates_dir / "00123" / "TestFolder"
+            folder.mkdir(parents=True)
+
+            # Set modification time to 10 days ago
+            ten_days_ago = datetime.now() - timedelta(days=10)
+            mtime_timestamp = ten_days_ago.timestamp()
+            os.utime(folder, (mtime_timestamp, mtime_timestamp))
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 1
+            # Allow 1 day tolerance for edge cases
+            assert 9 <= result[0].age_days <= 11
+
+    def test_age_with_reference_time(self):
+        """Uses reference_time for age calculation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            folder = duplicates_dir / "00123" / "TestFolder"
+            folder.mkdir(parents=True)
+
+            # Set mtime to a known date
+            known_date = datetime(2024, 1, 15, 12, 0, 0)
+            os.utime(folder, (known_date.timestamp(), known_date.timestamp()))
+
+            # Use reference time 30 days later
+            reference = datetime(2024, 2, 14, 12, 0, 0)
+            result = scan_quarantined_duplicates(tmp, reference_time=reference)
+
+            assert len(result) == 1
+            assert result[0].age_days == 30
+
+    def test_sorted_by_age_oldest_first(self):
+        """Results are sorted by age with oldest first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+
+            # Create folders with different ages
+            folder_old = duplicates_dir / "00001" / "Old"
+            folder_mid = duplicates_dir / "00002" / "Mid"
+            folder_new = duplicates_dir / "00003" / "New"
+            folder_old.mkdir(parents=True)
+            folder_mid.mkdir(parents=True)
+            folder_new.mkdir(parents=True)
+
+            # Set ages: old=30 days, mid=15 days, new=5 days
+            now = datetime.now()
+            os.utime(folder_old, ((now - timedelta(days=30)).timestamp(),) * 2)
+            os.utime(folder_mid, ((now - timedelta(days=15)).timestamp(),) * 2)
+            os.utime(folder_new, ((now - timedelta(days=5)).timestamp(),) * 2)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 3
+            assert result[0].folder_name == "Old"
+            assert result[1].folder_name == "Mid"
+            assert result[2].folder_name == "New"
+
+    def test_ignores_files_in_duplicates_folder(self):
+        """Ignores files (not directories) in _DUPLICATES."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            duplicates_dir.mkdir()
+
+            # Create a file instead of a directory
+            (duplicates_dir / "some_file.txt").write_text("test")
+
+            # Also create a valid folder
+            (duplicates_dir / "00123" / "ValidFolder").mkdir(parents=True)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 1
+            assert result[0].case_id == "00123"
+
+    def test_ignores_files_in_caseid_folder(self):
+        """Ignores files inside CaseID subdirectories."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            case_dir = duplicates_dir / "00123"
+            case_dir.mkdir(parents=True)
+
+            # Create a file instead of a folder
+            (case_dir / "some_file.txt").write_text("test")
+
+            # Also create a valid folder
+            (case_dir / "ValidFolder").mkdir()
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 1
+            assert result[0].folder_name == "ValidFolder"
+
+    def test_returns_correct_folder_path(self):
+        """folder_path contains the full path to the folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            duplicates_dir = Path(tmp) / DUPLICATES_FOLDER
+            folder = duplicates_dir / "00123" / "MyFolder"
+            folder.mkdir(parents=True)
+
+            result = scan_quarantined_duplicates(tmp)
+
+            assert len(result) == 1
+            assert result[0].folder_path == str(folder)
