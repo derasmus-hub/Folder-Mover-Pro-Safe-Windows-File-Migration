@@ -105,12 +105,12 @@ if (Test-Path $IcoPath) {
     Write-Host "  icon (ICO):      MISSING - run scripts\Make-Icon.ps1" -ForegroundColor Yellow
 }
 
-$PngPath = Join-Path $ProjectRoot "logo\ErasmusLabs_Logo_Reversed.png"
+$PngPath = Join-Path $ProjectRoot "logo\1.png"
 if (Test-Path $PngPath) {
-    Write-Host "  logo (PNG):      OK" -ForegroundColor Green
+    Write-Host "  logo (PNG):      OK (logo\1.png)" -ForegroundColor Green
 } else {
-    $Errors += "Source logo PNG not found"
-    Write-Host "  logo (PNG):      MISSING" -ForegroundColor Red
+    $Errors += "Source logo PNG not found (logo\1.png)"
+    Write-Host "  logo (PNG):      MISSING (logo\1.png)" -ForegroundColor Red
 }
 
 Write-Host ""

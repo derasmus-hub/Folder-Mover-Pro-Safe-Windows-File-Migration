@@ -3,7 +3,7 @@
     Convert the project logo PNG to a Windows ICO file.
 
 .DESCRIPTION
-    Converts logo\ErasmusLabs_Logo_Reversed.png into logo\ErasmusLabs.ico
+    Converts logo\1.png into logo\ErasmusLabs.ico
     containing standard icon sizes: 16, 24, 32, 48, 64, 128, 256 px.
 
     Tries ImageMagick first (magick convert). If not available, falls back
@@ -31,7 +31,7 @@ $ErrorActionPreference = "Stop"
 # Get project root (parent of scripts directory)
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
-$SourcePng = Join-Path $ProjectRoot "logo\ErasmusLabs_Logo_Reversed.png"
+$SourcePng = Join-Path $ProjectRoot "logo\1.png"
 $OutputIco = Join-Path $ProjectRoot "logo\ErasmusLabs.ico"
 
 $Sizes = @(16, 24, 32, 48, 64, 128, 256)
@@ -120,7 +120,7 @@ if (-not $UsedTool) {
     }
 
     $PythonScript = @"
-import sys
+import sys, os
 from PIL import Image
 
 source = sys.argv[1]
@@ -129,32 +129,22 @@ sizes = [16, 24, 32, 48, 64, 128, 256]
 
 img = Image.open(source)
 
-# Convert to RGBA if not already
+# Convert to RGBA if not already (required for ICO transparency)
 if img.mode != 'RGBA':
     img = img.convert('RGBA')
 
-# Create resized versions
-icon_images = []
-for sz in sizes:
-    resized = img.copy()
-    resized.thumbnail((sz, sz), Image.LANCZOS)
-    # Create exact-size canvas with transparency
-    canvas = Image.new('RGBA', (sz, sz), (0, 0, 0, 0))
-    # Center the resized image
-    offset_x = (sz - resized.width) // 2
-    offset_y = (sz - resized.height) // 2
-    canvas.paste(resized, (offset_x, offset_y))
-    icon_images.append(canvas)
-
-# Save as ICO with all sizes
-icon_images[0].save(
+# Pillow ICO: pass the full-size image and let sizes= handle downscaling
+img.save(
     output,
     format='ICO',
-    sizes=[(sz, sz) for sz in sizes],
-    append_images=icon_images[1:]
+    sizes=[(sz, sz) for sz in sizes]
 )
 
-print(f"Created ICO with {len(sizes)} sizes: {', '.join(f'{s}x{s}' for s in sizes)}")
+fsize = os.path.getsize(output)
+print("Created ICO ({:.1f} KB) with {} sizes: {}".format(
+    fsize / 1024, len(sizes),
+    ", ".join("{}x{}".format(s, s) for s in sizes)
+))
 "@
 
     $PythonScript | python - $SourcePng $OutputIco

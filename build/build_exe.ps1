@@ -104,7 +104,8 @@ function Build-Executable {
         [string]$EntryPointName,
         [string]$ConsoleFlag,
         [string]$VersionInfoFile,
-        [string[]]$ExtraImports
+        [string[]]$ExtraImports,
+        [string[]]$AddData
     )
 
     Write-Host ""
@@ -152,6 +153,11 @@ function Build-Executable {
         $PyInstallerArgs += $import
     }
 
+    foreach ($data in $AddData) {
+        $PyInstallerArgs += "--add-data"
+        $PyInstallerArgs += $data
+    }
+
     $PyInstallerArgs += $EntryPoint
 
     python -m PyInstaller @PyInstallerArgs
@@ -178,14 +184,21 @@ try {
     $Success = $true
 
     # Build GUI executable (windowed, no console)
+    # Bundle logo\1.png so the Tkinter titlebar icon works inside the frozen exe
+    $LogoPng = Join-Path $ProjectRoot "logo\1.png"
     if ($BuildGui) {
+        $GuiAddData = @()
+        if (Test-Path $LogoPng) {
+            $GuiAddData += "$LogoPng;logo"
+        }
         $result = Build-Executable `
             -Type "GUI" `
             -ExeName "FolderMoverPro" `
             -EntryPointName "entry_point_gui.py" `
             -ConsoleFlag "--noconsole" `
             -VersionInfoFile $VersionInfoGui `
-            -ExtraImports @("folder_mover.gui", "folder_mover.gui_app")
+            -ExtraImports @("folder_mover.gui", "folder_mover.gui_app") `
+            -AddData $GuiAddData
         if (-not $result) { $Success = $false }
     }
 
@@ -197,7 +210,8 @@ try {
             -EntryPointName "entry_point.py" `
             -ConsoleFlag "--console" `
             -VersionInfoFile $VersionInfoCli `
-            -ExtraImports @()
+            -ExtraImports @() `
+            -AddData @()
         if (-not $result) { $Success = $false }
     }
 

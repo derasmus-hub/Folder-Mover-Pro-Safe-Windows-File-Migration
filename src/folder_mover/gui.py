@@ -585,9 +585,31 @@ class FolderMoverGUI:
         dialog.wait_window()
 
 
+def _resource_path(relative_path: str) -> str:
+    """Resolve a resource path that works in both source and PyInstaller frozen mode."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running as PyInstaller bundle — resources are in the temp extract dir
+        base = sys._MEIPASS
+    else:
+        # Running from source — project root is two levels up from this file
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base, relative_path)
+
+
 def main() -> None:
     """Main entry point for GUI."""
     root = tk.Tk()
+
+    # Set titlebar / taskbar icon from logo/1.png
+    try:
+        icon_path = _resource_path(os.path.join("logo", "1.png"))
+        if os.path.isfile(icon_path):
+            _icon_image = tk.PhotoImage(file=icon_path)
+            root.iconphoto(True, _icon_image)
+            # Keep a reference so it isn't garbage-collected
+            root._icon_image = _icon_image  # type: ignore[attr-defined]
+    except Exception:
+        pass  # Non-fatal — fall back to default Tk icon
 
     # Set theme
     try:
