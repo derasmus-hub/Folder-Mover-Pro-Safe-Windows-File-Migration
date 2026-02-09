@@ -133,7 +133,8 @@ function Build-Executable {
         "--hidden-import", "folder_mover.mover",
         "--hidden-import", "folder_mover.report",
         "--hidden-import", "folder_mover.types",
-        "--hidden-import", "folder_mover.utils"
+        "--hidden-import", "folder_mover.utils",
+        "--hidden-import", "ahocorasick"
     )
 
     # Add icon if available

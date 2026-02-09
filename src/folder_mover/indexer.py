@@ -150,8 +150,9 @@ def match_caseids(
         Dictionary mapping each CaseID to list of matching FolderEntry objects.
         CaseIDs with no matches will have empty lists.
 
-    Raises:
-        MatcherNotAvailableError: If matcher="aho" but pyahocorasick is not installed
+    Note:
+        If matcher="aho" but pyahocorasick is not installed, logs a WARNING
+        and automatically falls back to the bucket matcher.
     """
     if not case_ids or not folders:
         return {cid: [] for cid in case_ids}
@@ -163,10 +164,11 @@ def match_caseids(
 
     if matcher == "aho":
         if not HAS_AHOCORASICK:
-            raise MatcherNotAvailableError(
+            logger.warning(
                 "Aho-Corasick matcher requested but pyahocorasick is not installed. "
-                "Install it with: pip install pyahocorasick"
+                "Falling back to bucket matcher."
             )
+            return _match_with_length_buckets(case_ids, folders, case_sensitive)
         return _match_with_ahocorasick(case_ids, folders, case_sensitive)
     else:
         # Default to bucket matcher

@@ -4,8 +4,8 @@
 # http://msdn.microsoft.com/en-us/library/ms646997.aspx
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 3, 0),
-    prodvers=(1, 0, 3, 0),
+    filevers=(1, 0, 4, 0),
+    prodvers=(1, 0, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,12 +21,12 @@ VSVersionInfo(
           [
             StringStruct(u'CompanyName', u'Erasmus Labs'),
             StringStruct(u'FileDescription', u'Folder Mover Pro CLI - Offline Windows File Migration Utility'),
-            StringStruct(u'FileVersion', u'1.0.3'),
+            StringStruct(u'FileVersion', u'1.0.4'),
             StringStruct(u'InternalName', u'FolderMoverPro-CLI'),
             StringStruct(u'LegalCopyright', u'Copyright (c) 2026 Erasmus Labs. All rights reserved.'),
             StringStruct(u'OriginalFilename', u'FolderMoverPro-CLI.exe'),
             StringStruct(u'ProductName', u'Folder Mover Pro'),
-            StringStruct(u'ProductVersion', u'1.0.3'),
+            StringStruct(u'ProductVersion', u'1.0.4'),
           ]
         )
       ]

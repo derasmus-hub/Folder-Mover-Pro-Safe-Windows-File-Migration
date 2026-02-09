@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Set
 
 from . import PRODUCT_NAME, PRODUCT_DESCRIPTION, __version__
 from .excel import load_case_ids
-from .indexer import match_caseids, scan_folders
+from .indexer import HAS_AHOCORASICK, match_caseids, scan_folders
 from .mover import FolderMover
 from .report import ReportWriter
 from .types import FolderMatch
@@ -145,14 +145,20 @@ class FolderMoverGUI:
 
         # Row 2: Matcher and on-dest-exists
         ttk.Label(options_frame, text="Matcher:").grid(row=1, column=0, sticky="w", pady=2)
+        matcher_values = ["bucket", "aho"] if HAS_AHOCORASICK else ["bucket"]
         matcher_combo = ttk.Combobox(
             options_frame,
             textvariable=self.matcher,
-            values=["bucket", "aho"],
+            values=matcher_values,
             state="readonly",
             width=12
         )
         matcher_combo.grid(row=1, column=1, sticky="w", padx=5)
+        if not HAS_AHOCORASICK:
+            ttk.Label(
+                options_frame, text="(aho unavailable)",
+                foreground="gray"
+            ).grid(row=1, column=1, sticky="e", padx=(100, 0))
 
         ttk.Label(options_frame, text="On Dest Exists:").grid(row=1, column=2, sticky="e", padx=(20, 5))
         dest_exists_combo = ttk.Combobox(

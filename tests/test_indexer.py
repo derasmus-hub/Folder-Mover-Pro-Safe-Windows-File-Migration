@@ -455,16 +455,18 @@ class TestMatcherSelection:
         results = match_caseids(case_ids, folders, matcher="bucket")
         assert len(results["00123"]) == 1
 
-    def test_aho_matcher_raises_if_not_available(self):
-        """Aho matcher should raise MatcherNotAvailableError if pyahocorasick not installed."""
+    def test_aho_matcher_falls_back_if_not_available(self):
+        """Aho matcher should fall back to bucket when pyahocorasick is not installed."""
         if HAS_AHOCORASICK:
-            pytest.skip("pyahocorasick is installed, cannot test unavailable error")
+            pytest.skip("pyahocorasick is installed, cannot test fallback")
 
-        folders = [FolderEntry(name="test", path="/test")]
-        case_ids = ["test"]
+        folders = [FolderEntry(name="Case_00123", path="/data/Case_00123")]
+        case_ids = ["00123"]
 
-        with pytest.raises(MatcherNotAvailableError):
-            match_caseids(case_ids, folders, matcher="aho")
+        # Should NOT raise; should silently fall back and produce correct results
+        results = match_caseids(case_ids, folders, matcher="aho")
+        assert len(results["00123"]) == 1
+        assert results["00123"][0].name == "Case_00123"
 
     @pytest.mark.skipif(not HAS_AHOCORASICK, reason="pyahocorasick not installed")
     def test_aho_matcher_works_when_available(self):
@@ -487,6 +489,74 @@ class TestMatcherSelection:
         # Not specifying matcher should use bucket (no exception even if aho not available)
         results = match_caseids(case_ids, folders)
         assert len(results["ABC"]) == 1
+
+
+class TestAhoFallback:
+    """Tests for aho-to-bucket fallback when pyahocorasick is unavailable."""
+
+    def test_fallback_produces_correct_matches(self, monkeypatch):
+        """When aho is requested but unavailable, fallback produces the same results as bucket."""
+        import folder_mover.indexer as indexer_mod
+
+        # Force HAS_AHOCORASICK to False regardless of actual installation
+        monkeypatch.setattr(indexer_mod, "HAS_AHOCORASICK", False)
+
+        folders = [
+            FolderEntry(name="Case_00123_Smith", path="/data/Case_00123_Smith"),
+            FolderEntry(name="Case_00456_Jones", path="/data/Case_00456_Jones"),
+            FolderEntry(name="00123_Duplicate", path="/archive/00123_Duplicate"),
+            FolderEntry(name="NoMatch", path="/other/NoMatch"),
+        ]
+        case_ids = ["00123", "00456", "99999"]
+
+        # Request aho — should fall back to bucket without raising
+        aho_results = match_caseids(case_ids, folders, matcher="aho")
+
+        # Verify correct match counts
+        assert len(aho_results["00123"]) == 2
+        assert len(aho_results["00456"]) == 1
+        assert len(aho_results["99999"]) == 0
+
+        # Verify results match explicit bucket call
+        bucket_results = match_caseids(case_ids, folders, matcher="bucket")
+        for cid in case_ids:
+            aho_paths = {f.path for f in aho_results[cid]}
+            bucket_paths = {f.path for f in bucket_results[cid]}
+            assert aho_paths == bucket_paths, f"Mismatch for CaseID '{cid}'"
+
+    def test_fallback_logs_warning(self, monkeypatch, caplog):
+        """When aho falls back, a WARNING is logged."""
+        import logging
+        import folder_mover.indexer as indexer_mod
+
+        monkeypatch.setattr(indexer_mod, "HAS_AHOCORASICK", False)
+
+        folders = [FolderEntry(name="Test", path="/test")]
+        case_ids = ["Test"]
+
+        with caplog.at_level(logging.WARNING, logger="folder_mover.indexer"):
+            match_caseids(case_ids, folders, matcher="aho")
+
+        assert any("Falling back to bucket" in msg for msg in caplog.messages)
+
+    def test_fallback_with_real_folder_tree(self, monkeypatch):
+        """End-to-end fallback test with actual directory scanning."""
+        import folder_mover.indexer as indexer_mod
+
+        monkeypatch.setattr(indexer_mod, "HAS_AHOCORASICK", False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "Case_001_Alpha").mkdir()
+            (base / "Case_002_Beta").mkdir()
+            (base / "Unrelated").mkdir()
+
+            folders = scan_folders(tmp)
+            results = match_caseids(["001", "002", "003"], folders, matcher="aho")
+
+            assert len(results["001"]) == 1
+            assert len(results["002"]) == 1
+            assert len(results["003"]) == 0
 
 
 class TestMatcherParity:
@@ -664,15 +734,16 @@ class TestFolderIndexerMatcher:
 
             assert len(matches) == 1
 
-    def test_indexer_aho_raises_if_unavailable(self):
-        """FolderIndexer with aho matcher raises if pyahocorasick not installed."""
+    def test_indexer_aho_falls_back_if_unavailable(self):
+        """FolderIndexer with aho matcher falls back to bucket if pyahocorasick not installed."""
         if HAS_AHOCORASICK:
             pytest.skip("pyahocorasick is installed")
 
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "Test").mkdir()
+            (Path(tmp) / "Test_ABC").mkdir()
 
             indexer = FolderIndexer(tmp, matcher="aho")
+            matches = indexer.find_matches("ABC")
 
-            with pytest.raises(MatcherNotAvailableError):
-                indexer.find_matches("Test")
+            assert len(matches) == 1
+            assert matches[0].folder_name == "Test_ABC"
