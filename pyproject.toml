@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "folder-mover-pro"
-version = "1.0.2"
+version = "1.0.3"
 description = "Folder Mover Pro - Offline Windows File Migration Utility"
 readme = "README.md"
 license = {text = "MIT"}
@@ -50,6 +50,7 @@ dev = [
 [project.scripts]
 folder-mover = "folder_mover.cli:main"
 folder-mover-pro = "folder_mover.cli:main"
+folder-mover-gui = "folder_mover.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/folder-mover"

@@ -14,7 +14,7 @@ This package provides functionality to:
 
 # Product identity constants
 PRODUCT_NAME = "Folder Mover Pro"
-PRODUCT_VERSION = "1.0.2"
+PRODUCT_VERSION = "1.0.3"
 PRODUCT_DESCRIPTION = "Offline Windows File Migration Utility"
 
 __version__ = PRODUCT_VERSION
