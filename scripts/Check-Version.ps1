@@ -4,13 +4,14 @@
 
 .DESCRIPTION
     Verifies that pyproject.toml, Python source, and exe all report
-    the same version. Exits non-zero if any mismatch is detected.
+    the same version. Also checks that the application icon exists.
+    Exits non-zero if any mismatch is detected.
 
 .EXAMPLE
     .\Check-Version.ps1
 
 .NOTES
-    Author: Folder Mover Pro
+    Author: Erasmus Labs
 #>
 
 [CmdletBinding()]
@@ -61,25 +62,55 @@ try {
     Write-Host "  python src:      ERROR - python not available" -ForegroundColor Red
 }
 
-# 3. Get version from exe
-$ExePath = Join-Path $ProjectRoot "dist\FolderMoverPro.exe"
-if (Test-Path $ExePath) {
+# 3. Get version from CLI exe (can verify via --version)
+$CliExePath = Join-Path $ProjectRoot "dist\FolderMoverPro-CLI.exe"
+if (Test-Path $CliExePath) {
     try {
-        $ExeVersion = (& $ExePath --version 2>&1) | Out-String
+        $ExeVersion = (& $CliExePath --version 2>&1) | Out-String
         $ExeVersion = $ExeVersion.Trim()
         if ($LASTEXITCODE -eq 0 -and $ExeVersion) {
-            $Versions["exe"] = $ExeVersion
-            Write-Host "  exe:             $($Versions["exe"])" -ForegroundColor White
+            $Versions["cli exe"] = $ExeVersion
+            Write-Host "  cli exe:         $($Versions["cli exe"])" -ForegroundColor White
         } else {
-            $Errors += "Exe returned error or empty version"
-            Write-Host "  exe:             ERROR - returned error" -ForegroundColor Red
+            $Errors += "CLI exe returned error or empty version"
+            Write-Host "  cli exe:         ERROR - returned error" -ForegroundColor Red
         }
     } catch {
-        $Errors += "Exe execution failed: $_"
-        Write-Host "  exe:             ERROR - execution failed" -ForegroundColor Red
+        $Errors += "CLI exe execution failed: $_"
+        Write-Host "  cli exe:         ERROR - execution failed" -ForegroundColor Red
     }
 } else {
-    Write-Host "  exe:             (not built)" -ForegroundColor DarkGray
+    Write-Host "  cli exe:         (not built)" -ForegroundColor DarkGray
+}
+
+# 4. Check GUI exe exists (windowed - cannot verify version via CLI)
+$GuiExePath = Join-Path $ProjectRoot "dist\FolderMoverPro.exe"
+if (Test-Path $GuiExePath) {
+    $GuiFileInfo = Get-Item $GuiExePath
+    Write-Host "  gui exe:         (exists, $([math]::Round($GuiFileInfo.Length / 1MB, 2)) MB)" -ForegroundColor DarkGray
+} else {
+    Write-Host "  gui exe:         (not built)" -ForegroundColor DarkGray
+}
+
+Write-Host ""
+
+# 5. Check application icon
+Write-Host "  Asset Checks" -ForegroundColor Cyan
+Write-Host "  -------------" -ForegroundColor Cyan
+$IcoPath = Join-Path $ProjectRoot "logo\ErasmusLabs.ico"
+if (Test-Path $IcoPath) {
+    $IcoInfo = Get-Item $IcoPath
+    Write-Host "  icon (ICO):      OK ($([math]::Round($IcoInfo.Length / 1KB, 1)) KB)" -ForegroundColor Green
+} else {
+    Write-Host "  icon (ICO):      MISSING - run scripts\Make-Icon.ps1" -ForegroundColor Yellow
+}
+
+$PngPath = Join-Path $ProjectRoot "logo\ErasmusLabs_Logo_Reversed.png"
+if (Test-Path $PngPath) {
+    Write-Host "  logo (PNG):      OK" -ForegroundColor Green
+} else {
+    $Errors += "Source logo PNG not found"
+    Write-Host "  logo (PNG):      MISSING" -ForegroundColor Red
 }
 
 Write-Host ""

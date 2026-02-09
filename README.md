@@ -581,6 +581,82 @@ Get-ChildItem -Path "C:\Source" -Recurse -Directory | Where-Object { $_.Name -li
 - **[Client Handoff Guide](docs/CLIENT_HANDOFF.md)** - Detailed test protocol, report interpretation, and resume instructions
 - **[Release Scripts](release/scripts/)** - PowerShell wrappers for common operations
 
+## Windows Security & Trust
+
+### SmartScreen Warnings
+
+Folder Mover Pro executables are **not digitally signed** with a code-signing certificate. When you first run an EXE, Windows SmartScreen will display a warning:
+
+> "Windows protected your PC — Microsoft Defender SmartScreen prevented an unrecognized app from starting."
+
+**This is expected behavior for unsigned software.** To proceed:
+1. Click **"More info"**
+2. Click **"Run anyway"**
+
+SmartScreen warnings cannot be removed without purchasing a code-signing certificate (typically $200-400/year) and building reputation through Microsoft's telemetry system. This is a cost-benefit decision, not a sign that the software is unsafe.
+
+### SHA256 Verification
+
+Every release includes SHA256 hashes for both EXE files and the release ZIP. To verify file integrity:
+
+```powershell
+# Check hash of a downloaded file
+Get-FileHash .\FolderMoverPro.exe -Algorithm SHA256
+
+# Compare the output against the hash published in the release notes
+```
+
+If the hash does not match the published value, **do not run the file** — it may have been modified in transit.
+
+### Why Not Email EXEs
+
+Do not distribute EXE files via email:
+- Most email providers strip or quarantine `.exe` attachments
+- Recipients have no way to verify the file wasn't tampered with
+- Email is not a reliable delivery mechanism for executables
+
+Use GitHub Releases or a shared ZIP download link instead.
+
+## Distribution
+
+### Recommended: GitHub Releases
+
+The preferred distribution method is **GitHub Releases**:
+- Download the `.zip` file (not the source code archive)
+- ZIP contains both EXEs, a quick-start guide, and demo files
+- Release notes include SHA256 hashes for verification
+
+### Release ZIP Contents
+
+```
+FolderMoverPro-v1.0.3-win64.zip
+├── FolderMoverPro.exe          # GUI - double-click to launch
+├── FolderMoverPro-CLI.exe      # CLI - for command-line use
+├── README-QuickStart.txt       # Getting started guide
+└── demo/
+    ├── demo_cases.xlsx         # Sample Excel file
+    ├── demo_source/            # Sample source tree
+    └── demo_dest/              # Empty destination for testing
+```
+
+### Building From Source
+
+If you prefer to build the EXEs yourself:
+
+```powershell
+# 1. Generate the icon (first time only)
+.\scripts\Make-Icon.ps1
+
+# 2. Build both EXEs with icon and version metadata
+.\build\build_exe.ps1 -Clean
+
+# 3. Package the release ZIP
+.\build\package_release.ps1
+
+# 4. Verify versions match
+.\scripts\Check-Version.ps1
+```
+
 ## Running Tests
 
 ```powershell

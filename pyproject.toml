@@ -50,7 +50,8 @@ dev = [
 [project.scripts]
 folder-mover = "folder_mover.cli:main"
 folder-mover-pro = "folder_mover.cli:main"
-folder-mover-gui = "folder_mover.gui:main"
+folder-mover-gui = "folder_mover.gui_app:main"
+folder-mover-pro-gui = "folder_mover.gui_app:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/folder-mover"
