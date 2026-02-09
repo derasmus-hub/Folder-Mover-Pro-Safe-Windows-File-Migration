@@ -301,6 +301,62 @@ Use `-LogPath` to specify a custom location:
 
 ---
 
+## Versioning Policy
+
+### Single Source of Truth
+
+The product version is defined in **one place only**:
+
+```
+pyproject.toml → [project] version = "X.Y.Z"
+```
+
+All other version references must derive from or match this value:
+
+| Location | How It Gets Version |
+|----------|---------------------|
+| `pyproject.toml` | **Source of truth** - edit here only |
+| `src/folder_mover/__init__.py` | Reads from package metadata; fallback must match pyproject.toml |
+| `dist/FolderMoverPro.exe` | Built from source; verified by build script |
+| Git tags | Must match pyproject.toml exactly (e.g., `v1.0.0`) |
+
+### Version Check Script
+
+To verify all versions are in sync:
+
+```powershell
+.\scripts\Check-Version.ps1
+```
+
+This prints versions from pyproject.toml, Python source, and exe, then exits non-zero if they differ.
+
+### Rules for Releases
+
+1. **Never tag without bumping version first**
+   - Edit `pyproject.toml` version
+   - Update fallback in `__init__.py` if present
+   - Rebuild exe
+   - Run `Check-Version.ps1` to verify
+   - Then create git tag
+
+2. **Tag format**: `vX.Y.Z` (e.g., `v1.0.0`, `v1.2.3`)
+
+3. **Semantic versioning**:
+   - MAJOR: Breaking changes
+   - MINOR: New features, backward compatible
+   - PATCH: Bug fixes, backward compatible
+
+### Fixing Version Mismatch
+
+If `Check-Version.ps1` reports a mismatch:
+
+1. Identify which version is correct (usually pyproject.toml)
+2. Update any mismatched sources to match
+3. Rebuild exe: `.\build\build_exe.ps1 -Clean`
+4. Re-run `Check-Version.ps1` to confirm
+
+---
+
 ## Maintenance
 
 No maintenance required. Standalone executable with no dependencies.
