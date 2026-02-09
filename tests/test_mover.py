@@ -1264,3 +1264,224 @@ class TestScanQuarantinedDuplicates:
 
             assert len(result) == 1
             assert result[0].folder_path == str(folder)
+
+
+class TestMaxMovesAsOperations:
+    """Tests for --max-moves counting operations, not list truncation."""
+
+    def test_max_moves_counts_quarantine_as_operation(self):
+        """With max_moves=1 and duplicates, exactly 1 quarantine happens, 0 moves."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Create two folders matching same duplicate CaseID
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123_B"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                max_moves=1,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            # Only 1 result because we stopped after 1 operation
+            assert len(results) == 1
+            assert results[0].status == MoveStatus.QUARANTINED
+
+            # Stats should show 1 quarantine, 0 moves
+            stats = mover.get_stats()
+            assert stats["quarantined"] == 1
+            assert stats["success"] == 0
+
+    def test_max_moves_two_quarantines(self):
+        """With max_moves=2 and duplicates, exactly 2 quarantines happen."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Create three folders matching same duplicate CaseID
+            src1 = base / "Case_00123_A"
+            src2 = base / "Case_00123_B"
+            src3 = base / "Case_00123_C"
+            src1.mkdir()
+            src2.mkdir()
+            src3.mkdir()
+
+            matches = [
+                FolderMatch("00123", str(src1), "Case_00123_A"),
+                FolderMatch("00123", str(src2), "Case_00123_B"),
+                FolderMatch("00123", str(src3), "Case_00123_C"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                max_moves=2,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"00123"}
+            )
+            results = mover.move_all(matches)
+
+            # Only 2 results
+            assert len(results) == 2
+            assert all(r.status == MoveStatus.QUARANTINED for r in results)
+
+            # Third folder should still exist (not processed)
+            assert src3.exists()
+
+    def test_max_moves_single_move_no_duplicates(self):
+        """With max_moves=1 and no duplicates, exactly 1 move happens."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # Create three non-duplicate folders
+            src1 = base / "Case_001"
+            src2 = base / "Case_002"
+            src3 = base / "Case_003"
+            src1.mkdir()
+            src2.mkdir()
+            src3.mkdir()
+
+            matches = [
+                FolderMatch("001", str(src1), "Case_001"),
+                FolderMatch("002", str(src2), "Case_002"),
+                FolderMatch("003", str(src3), "Case_003"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                max_moves=1,
+                duplicates_action="quarantine",
+                duplicate_case_ids=set()  # No duplicates
+            )
+            results = mover.move_all(matches)
+
+            # Only 1 result
+            assert len(results) == 1
+            assert results[0].status == MoveStatus.SUCCESS
+
+            # Only first folder moved
+            assert (dest_root / "Case_001").exists()
+            assert src2.exists()  # Not processed
+            assert src3.exists()  # Not processed
+
+    def test_max_moves_skips_dont_count(self):
+        """Skipped operations don't count toward max_moves limit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # First two will be skipped (excluded), third should move
+            src1 = base / "temp_folder_1"
+            src2 = base / "temp_folder_2"
+            src3 = base / "normal_folder"
+            src1.mkdir()
+            src2.mkdir()
+            src3.mkdir()
+
+            matches = [
+                FolderMatch("001", str(src1), "temp_folder_1"),
+                FolderMatch("002", str(src2), "temp_folder_2"),
+                FolderMatch("003", str(src3), "normal_folder"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                max_moves=1,
+                exclude_patterns=["temp"],  # First two will be excluded
+            )
+            results = mover.move_all(matches)
+
+            # All 3 processed: 2 skipped + 1 moved = 3 results
+            assert len(results) == 3
+            assert results[0].status == MoveStatus.SKIPPED_EXCLUDED
+            assert results[1].status == MoveStatus.SKIPPED_EXCLUDED
+            assert results[2].status == MoveStatus.SUCCESS
+
+            # Skips didn't count, so we got 1 op (the move)
+            stats = mover.get_stats()
+            assert stats["skipped_excluded"] == 2
+            assert stats["success"] == 1
+
+    def test_max_moves_mixed_moves_and_quarantines(self):
+        """Max moves counts both regular moves and quarantines toward limit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            # One single-match, two duplicates
+            src_single = base / "Case_001"
+            src_dup1 = base / "Case_002_A"
+            src_dup2 = base / "Case_002_B"
+            src_single.mkdir()
+            src_dup1.mkdir()
+            src_dup2.mkdir()
+
+            matches = [
+                FolderMatch("001", str(src_single), "Case_001"),  # Will move
+                FolderMatch("002", str(src_dup1), "Case_002_A"),  # Will quarantine
+                FolderMatch("002", str(src_dup2), "Case_002_B"),  # Would quarantine but limit hit
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                max_moves=2,
+                duplicates_action="quarantine",
+                duplicate_case_ids={"002"}
+            )
+            results = mover.move_all(matches)
+
+            # 2 ops: 1 move + 1 quarantine
+            assert len(results) == 2
+            assert results[0].status == MoveStatus.SUCCESS
+            assert results[1].status == MoveStatus.QUARANTINED
+
+            # Third folder not processed
+            assert src_dup2.exists()
+
+    def test_max_moves_dry_run_counts_operations(self):
+        """Dry-run operations also count toward max_moves."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            dest_root = base / "dest"
+            dest_root.mkdir()
+
+            src1 = base / "Case_001"
+            src2 = base / "Case_002"
+            src1.mkdir()
+            src2.mkdir()
+
+            matches = [
+                FolderMatch("001", str(src1), "Case_001"),
+                FolderMatch("002", str(src2), "Case_002"),
+            ]
+
+            mover = FolderMover(
+                dest_root,
+                dry_run=True,
+                max_moves=1,
+            )
+            results = mover.move_all(matches)
+
+            # Only 1 dry-run op
+            assert len(results) == 1
+            assert results[0].status == MoveStatus.DRY_RUN
+
+            # Both sources still exist (dry run)
+            assert src1.exists()
+            assert src2.exists()

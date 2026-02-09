@@ -387,3 +387,131 @@ class TestDeterministicOutput:
                 assert row["case_id"] == "案件001"
                 assert "日本語" in row["source_path"]
                 assert "成功" in row["message"]
+
+
+class TestQuarantineReportStatus:
+    """Tests for quarantine-related report statuses."""
+
+    def test_quarantined_status_in_report(self):
+        """Quarantined results show QUARANTINED status, not MULTIPLE_MATCHES."""
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.csv"
+
+            result = MoveResult(
+                case_id="00123",
+                source_path="/source/Case_00123_A",
+                dest_path="/dest/_DUPLICATES/00123/Case_00123_A",
+                status=MoveStatus.QUARANTINED,
+                message="Quarantined duplicate"
+            )
+
+            with ReportWriter(report_path) as writer:
+                # Even with is_multiple_match=True, quarantine status is preserved
+                writer.write_move_result(result, is_multiple_match=True)
+
+            with open(report_path) as f:
+                reader = csv.DictReader(f)
+                row = next(reader)
+
+                assert row["status"] == "QUARANTINED"
+                # Message should note it's a multiple match
+                assert "[Multiple matches]" in row["message"]
+
+    def test_quarantined_renamed_status_in_report(self):
+        """Quarantined with rename shows QUARANTINED_RENAMED status."""
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.csv"
+
+            result = MoveResult(
+                case_id="00123",
+                source_path="/source/Case_00123",
+                dest_path="/dest/_DUPLICATES/00123/Case_00123_1",
+                status=MoveStatus.QUARANTINED_RENAMED,
+                message="Quarantined duplicate (renamed)"
+            )
+
+            with ReportWriter(report_path) as writer:
+                writer.write_move_result(result, is_multiple_match=True)
+
+            with open(report_path) as f:
+                reader = csv.DictReader(f)
+                row = next(reader)
+
+                assert row["status"] == "QUARANTINED_RENAMED"
+
+    def test_dry_run_quarantine_status_in_report(self):
+        """Dry-run quarantine shows FOUND_DRYRUN_QUARANTINE status."""
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.csv"
+
+            result = MoveResult(
+                case_id="00123",
+                source_path="/source/Case_00123_A",
+                dest_path="/dest/_DUPLICATES/00123/Case_00123_A",
+                status=MoveStatus.DRY_RUN_QUARANTINE,
+                message="Would quarantine duplicate"
+            )
+
+            with ReportWriter(report_path) as writer:
+                writer.write_move_result(result, is_multiple_match=True)
+
+            with open(report_path) as f:
+                reader = csv.DictReader(f)
+                row = next(reader)
+
+                assert row["status"] == "FOUND_DRYRUN_QUARANTINE"
+
+    def test_move_all_mode_still_uses_multiple_matches(self):
+        """In move-all mode (non-quarantine), SUCCESS still becomes MULTIPLE_MATCHES."""
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.csv"
+
+            # Regular SUCCESS with is_multiple=True (move-all mode)
+            result = MoveResult(
+                case_id="00123",
+                source_path="/source/Case_00123_A",
+                dest_path="/dest/Case_00123_A",
+                status=MoveStatus.SUCCESS,
+                message="Moved successfully"
+            )
+
+            with ReportWriter(report_path) as writer:
+                writer.write_move_result(result, is_multiple_match=True)
+
+            with open(report_path) as f:
+                reader = csv.DictReader(f)
+                row = next(reader)
+
+                # Non-quarantine multiple matches should be MULTIPLE_MATCHES
+                assert row["status"] == "MULTIPLE_MATCHES"
+
+    def test_all_quarantine_status_conversions(self):
+        """All quarantine-related MoveStatus values convert correctly."""
+        conversions = [
+            (MoveStatus.QUARANTINED, "QUARANTINED"),
+            (MoveStatus.QUARANTINED_RENAMED, "QUARANTINED_RENAMED"),
+            (MoveStatus.DRY_RUN_QUARANTINE, "FOUND_DRYRUN_QUARANTINE"),
+            (MoveStatus.DRY_RUN_QUARANTINE_RENAMED, "FOUND_DRYRUN_QUARANTINE_RENAMED"),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.csv"
+
+            with ReportWriter(report_path) as writer:
+                for move_status, _ in conversions:
+                    result = MoveResult(
+                        case_id="test",
+                        source_path="/src",
+                        dest_path="/dest/_DUPLICATES/test/folder",
+                        status=move_status,
+                        message="test"
+                    )
+                    # Marked as multiple match, but should preserve quarantine status
+                    writer.write_move_result(result, is_multiple_match=True)
+
+            with open(report_path) as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+                for i, (_, expected_status) in enumerate(conversions):
+                    assert rows[i]["status"] == expected_status

@@ -189,9 +189,23 @@ class ReportWriter:
             timestamp: Optional timestamp (defaults to current time)
         """
         # Determine report status
-        if is_multiple_match:
-            # For multiple matches, use MULTIPLE_MATCHES but keep the
-            # underlying action status in the message
+        # Quarantine statuses are action-based and should not be overridden
+        quarantine_statuses = {
+            MoveStatus.QUARANTINED,
+            MoveStatus.QUARANTINED_RENAMED,
+            MoveStatus.DRY_RUN_QUARANTINE,
+            MoveStatus.DRY_RUN_QUARANTINE_RENAMED,
+        }
+
+        if result.status in quarantine_statuses:
+            # Quarantine actions get their true status; note multiple match in message
+            report_status = ReportStatus.from_move_status(result.status)
+            if is_multiple_match:
+                message = f"[Multiple matches] {result.message}"
+            else:
+                message = result.message
+        elif is_multiple_match:
+            # For non-quarantine multiple matches (move-all mode), use MULTIPLE_MATCHES
             report_status = ReportStatus.MULTIPLE_MATCHES
             message = f"[Multiple matches] {result.message}"
         else:

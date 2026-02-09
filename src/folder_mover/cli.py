@@ -473,6 +473,9 @@ def print_summary(
             print(f"  Would quarantine:      {dry_quarantine}")
             if move_stats.get("dry_run_quarantine_renamed", 0):
                 print(f"    (with rename:        {move_stats.get('dry_run_quarantine_renamed', 0)})")
+        # Total ops (dry-run)
+        total_ops = dry_count + dry_quarantine
+        print(f"  Ops (would perform):   {total_ops}")
     else:
         moved = move_stats.get("success", 0) + move_stats.get("success_renamed", 0)
         print(f"  Moved:                 {moved}")
@@ -484,6 +487,9 @@ def print_summary(
             print(f"  Quarantined:           {quarantined}")
             if move_stats.get("quarantined_renamed", 0):
                 print(f"    (with rename:        {move_stats.get('quarantined_renamed', 0)})")
+        # Total ops performed
+        total_ops = moved + quarantined
+        print(f"  Ops performed:         {total_ops}")
 
     skipped = (
         move_stats.get("skipped_missing", 0) +

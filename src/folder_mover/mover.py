@@ -207,7 +207,8 @@ def resolve_destination(
 def move_folder(
     src_path: Union[str, Path],
     dest_path: Union[str, Path],
-    dry_run: bool = False
+    dry_run: bool = False,
+    action: str = "Moving"
 ) -> MoveResult:
     """
     Move a single folder from source to destination.
@@ -273,7 +274,7 @@ def move_folder(
 
     # Dry run - just report what would happen
     if dry_run:
-        logger.info(f"[DRY RUN] {src_str} -> {dest_str}")
+        logger.info(f"[DRY RUN] {action}: {src_str} -> {dest_str}")
         return MoveResult(
             case_id="",
             source_path=src_str,
@@ -298,7 +299,7 @@ def move_folder(
         )
 
     # Perform the actual move using safe_move (handles long paths, cross-volume, etc.)
-    logger.info(f"Moving: {src_str} -> {dest_str}")
+    logger.info(f"{action}: {src_str} -> {dest_str}")
     success, message = safe_move(src_str, dest_str, use_extended_paths=True)
 
     if success:
@@ -579,10 +580,8 @@ class FolderMover:
         dest_path = self._resolve_quarantine_destination(match.case_id, folder_name)
         dest_name = Path(dest_path).name
 
-        logger.info(f"Quarantining duplicate: {match.source_path} -> {dest_path}")
-
-        # Perform the move
-        result = move_folder(src_path, dest_path, self.dry_run)
+        # Perform the move (with quarantine-specific logging)
+        result = move_folder(src_path, dest_path, self.dry_run, action="Quarantining")
 
         # Determine if this was a rename
         was_renamed = dest_name != folder_name
@@ -635,30 +634,52 @@ class FolderMover:
         """
         results: List[MoveResult] = []
         total = len(matches)
+        ops_count = 0  # Count actual operations (moves + quarantines)
 
-        # Apply max_moves limit if set
-        if self.max_moves is not None and total > self.max_moves:
-            logger.warning(
-                f"Limiting moves to {self.max_moves} of {total} "
+        # Statuses that count as an operation (actual file system move)
+        OP_STATUSES = {
+            MoveStatus.SUCCESS,
+            MoveStatus.SUCCESS_RENAMED,
+            MoveStatus.QUARANTINED,
+            MoveStatus.QUARANTINED_RENAMED,
+            MoveStatus.DRY_RUN,
+            MoveStatus.DRY_RUN_RENAMED,
+            MoveStatus.DRY_RUN_QUARANTINE,
+            MoveStatus.DRY_RUN_QUARANTINE_RENAMED,
+        }
+
+        if self.max_moves is not None:
+            logger.info(
+                f"Processing up to {self.max_moves} operations from {total} matches "
                 f"(--max-moves safety limit)"
             )
-            matches = matches[:self.max_moves]
-            total = len(matches)
-
-        logger.info(f"Processing {total} folder matches...")
+        else:
+            logger.info(f"Processing {total} folder matches...")
 
         for i, match in enumerate(matches):
+            # Check if we've hit the operation limit
+            if self.max_moves is not None and ops_count >= self.max_moves:
+                logger.info(
+                    f"Reached --max-moves limit ({self.max_moves} ops). "
+                    f"Stopping with {total - i} matches remaining."
+                )
+                break
+
             if progress_callback:
                 progress_callback(i + 1, total, match)
 
             result = self.move_folder(match)
             results.append(result)
 
-            # Log progress every 100 moves
-            if (i + 1) % 100 == 0:
-                logger.info(f"Processed {i + 1}/{total} folders...")
+            # Count actual operations (not skips)
+            if result.status in OP_STATUSES:
+                ops_count += 1
 
-        logger.info(f"Completed processing {total} folders")
+            # Log progress every 100 processed
+            if (i + 1) % 100 == 0:
+                logger.info(f"Processed {i + 1}/{total} folders ({ops_count} ops)...")
+
+        logger.info(f"Completed: {len(results)} processed, {ops_count} operations performed")
         return results
 
     def get_stats(self) -> Dict[str, int]:
