@@ -28,7 +28,7 @@ Before running any file migration:
 FolderMoverPro.exe --version
 ```
 
-Expected: `1.0.0`
+Expected: `1.0.1`
 
 ### Display Help
 
@@ -259,6 +259,26 @@ The cleanup script has multiple safety layers:
 | **Explicit switch** | Requires `-ConfirmDelete` to enable deletion |
 | **Type confirmation** | Must type `DELETE` to actually proceed |
 | **Age threshold** | Only deletes folders older than specified days |
+| **CSV audit log** | Every action is logged to CSV for audit trail |
+
+### Cleanup CSV Log
+
+The cleanup script automatically writes a CSV log of all actions:
+
+| Column | Description |
+|--------|-------------|
+| `timestamp` | When the action was taken |
+| `path` | Full path to the folder |
+| `last_write` | Folder's last modification time |
+| `action` | `WOULD_DELETE` (preview), `DELETED`, `ERROR`, or `DELETED_EMPTY_DIR` |
+| `message` | Additional details (age, size, error message) |
+
+By default, logs are written to `cleanup_log_<timestamp>.csv` in the current directory.
+Use `-LogPath` to specify a custom location:
+
+```powershell
+.\scripts\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -LogPath C:\Logs\cleanup_audit.csv
+```
 
 ### Cleanup Workflow
 

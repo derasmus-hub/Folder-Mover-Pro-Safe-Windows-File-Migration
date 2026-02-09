@@ -12,6 +12,7 @@
     - Requires explicit -ConfirmDelete switch to enable deletion
     - Requires typing "DELETE" to confirm actual deletion
     - Shows full preview before any deletion
+    - Writes CSV log of all actions taken
 
 .PARAMETER DestRoot
     The destination root directory containing _DUPLICATES folder.
@@ -29,6 +30,10 @@
     Must be explicitly set to $true to enable actual deletion.
     Even with this set, user must still type "DELETE" to confirm.
 
+.PARAMETER LogPath
+    Path for CSV log file. If not specified, creates cleanup_log_<timestamp>.csv
+    in the current directory.
+
 .EXAMPLE
     # Preview what would be deleted (30+ days old)
     .\Cleanup-Duplicates.ps1 -DestRoot C:\Dest
@@ -41,9 +46,13 @@
     # Actually delete (requires typing DELETE to confirm)
     .\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -OlderThanDays 30 -WhatIf:$false -ConfirmDelete
 
+.EXAMPLE
+    # Delete with custom log path
+    .\Cleanup-Duplicates.ps1 -DestRoot C:\Dest -WhatIf:$false -ConfirmDelete -LogPath C:\Logs\cleanup.csv
+
 .NOTES
     Author: Folder Mover Pro
-    Version: 1.0.0
+    Version: 1.1.0
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -60,13 +69,52 @@ param(
     [switch]$WhatIf = $true,
 
     [Parameter(HelpMessage = "Must be set to enable actual deletion")]
-    [switch]$ConfirmDelete = $false
+    [switch]$ConfirmDelete = $false,
+
+    [Parameter(HelpMessage = "Path for CSV log file (default: cleanup_log_<timestamp>.csv)")]
+    [string]$LogPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 # Constants
 $DUPLICATES_FOLDER = "_DUPLICATES"
+
+# Initialize CSV log
+if ([string]::IsNullOrEmpty($LogPath)) {
+    $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $LogPath = Join-Path (Get-Location) "cleanup_log_$Timestamp.csv"
+}
+
+# CSV log entries will be collected here
+$LogEntries = [System.Collections.ArrayList]::new()
+
+function Write-LogEntry {
+    param(
+        [string]$Path,
+        [datetime]$LastWriteTime,
+        [string]$Action,
+        [string]$Message = ""
+    )
+
+    $Entry = [PSCustomObject]@{
+        timestamp      = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        path           = $Path
+        last_write     = $LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+        action         = $Action
+        message        = $Message
+    }
+
+    [void]$script:LogEntries.Add($Entry)
+    Write-Verbose "LOG: $Action - $Path"
+}
+
+function Save-LogFile {
+    if ($script:LogEntries.Count -gt 0) {
+        $script:LogEntries | Export-Csv -Path $script:LogPath -NoTypeInformation -Encoding UTF8
+        Write-Host "Log written to: $script:LogPath" -ForegroundColor Cyan
+    }
+}
 
 # Banner
 Write-Host ""
@@ -176,6 +224,12 @@ Write-Host ""
 
 # WhatIf mode - just preview
 if ($WhatIf) {
+    # Log what would be deleted
+    foreach ($Folder in $FoldersToDelete) {
+        Write-LogEntry -Path $Folder.FullPath -LastWriteTime $Folder.LastModified -Action "WOULD_DELETE" -Message "Age: $($Folder.AgeDays) days, Size: $($Folder.SizeBytes) bytes"
+    }
+    Save-LogFile
+
     Write-Host "================================================================================" -ForegroundColor Cyan
     Write-Host "  PREVIEW MODE - NO CHANGES MADE" -ForegroundColor Cyan
     Write-Host "================================================================================" -ForegroundColor Cyan
@@ -240,12 +294,14 @@ foreach ($Folder in $FoldersToDelete) {
     try {
         Remove-Item -Path $Folder.FullPath -Recurse -Force -ErrorAction Stop
         Write-Host " OK" -ForegroundColor Green
+        Write-LogEntry -Path $Folder.FullPath -LastWriteTime $Folder.LastModified -Action "DELETED" -Message "Age: $($Folder.AgeDays) days, Size: $($Folder.SizeBytes) bytes"
         $DeletedCount++
         $DeletedSize += $Folder.SizeBytes
     }
     catch {
         Write-Host " FAILED" -ForegroundColor Red
         Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-LogEntry -Path $Folder.FullPath -LastWriteTime $Folder.LastModified -Action "ERROR" -Message $_.Exception.Message
         $ErrorCount++
     }
 }
@@ -261,6 +317,7 @@ foreach ($CaseIdDir in $CaseIdDirs) {
         try {
             Remove-Item -Path $CaseIdDir.FullName -Force -ErrorAction Stop
             Write-Host "  Removed empty: $($CaseIdDir.Name)" -ForegroundColor DarkGray
+            Write-LogEntry -Path $CaseIdDir.FullName -LastWriteTime $CaseIdDir.LastWriteTime -Action "DELETED_EMPTY_DIR" -Message "Empty CaseID directory"
         }
         catch {
             # Ignore errors on cleanup
@@ -272,13 +329,18 @@ foreach ($CaseIdDir in $CaseIdDirs) {
 $RemainingCount = (Get-ChildItem -Path $DuplicatesPath -ErrorAction SilentlyContinue).Count
 if ($RemainingCount -eq 0) {
     try {
+        $DuplicatesDirInfo = Get-Item -Path $DuplicatesPath
         Remove-Item -Path $DuplicatesPath -Force -ErrorAction Stop
         Write-Host "  Removed empty: $DUPLICATES_FOLDER" -ForegroundColor DarkGray
+        Write-LogEntry -Path $DuplicatesPath -LastWriteTime $DuplicatesDirInfo.LastWriteTime -Action "DELETED_EMPTY_DIR" -Message "Empty _DUPLICATES directory"
     }
     catch {
         # Ignore errors on cleanup
     }
 }
+
+# Save log file
+Save-LogFile
 
 # Final summary
 $DeletedSizeMB = [math]::Round($DeletedSize / 1MB, 2)
